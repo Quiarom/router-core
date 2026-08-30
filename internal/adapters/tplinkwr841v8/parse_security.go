@@ -121,30 +121,36 @@ func ParseForwarding(html []byte) (domain.SecurityState, error) {
 }
 
 func ParseSecurity(html []byte) (domain.SecurityState, error) {
-	switch {
-	case hasArray(html, "wpsPara"):
-		return ParseWPS(html)
-	case hasArray(html, "dmzPara"):
-		return ParseDMZ(html)
-	case hasArray(html, "upnpPara"):
-		return ParseUPnP(html)
-	case hasArray(html, "remotePara"):
-		return ParseRemoteManagement(html)
-	case hasArray(html, "virtualServerPara"):
-		return ParseForwarding(html)
-	default:
-		if err := Classify(html); err != nil {
+	if err := Classify(html); err != nil {
+		return domain.SecurityState{}, err
+	}
+	state := domain.SecurityState{Provenance: domain.ProvenanceObserved}
+	parts := []struct {
+		name  string
+		parse func([]byte) (domain.SecurityState, error)
+	}{
+		{"wpsPara", ParseWPS},
+		{"dmzPara", ParseDMZ},
+		{"upnpPara", ParseUPnP},
+		{"remotePara", ParseRemoteManagement},
+		{"virtualServerPara", ParseForwarding},
+	}
+	found := false
+	for _, part := range parts {
+		if !strings.Contains(string(html), part.name) {
+			continue
+		}
+		found = true
+		parsed, err := part.parse(html)
+		if err != nil {
 			return domain.SecurityState{}, err
 		}
-		state := domain.SecurityState{Provenance: domain.ProvenanceObserved}
-		state.MarkUnsupported("security", "no capture for security page")
-		return state, nil
+		mergeSecurity(&state, parsed)
 	}
-}
-
-func hasArray(html []byte, name string) bool {
-	_, ok := ExtractArray(html, name)
-	return ok
+	if !found {
+		state.MarkUnsupported("security", "no capture for security page")
+	}
+	return state, nil
 }
 
 func securityArray(html []byte, name, page string) ([]Token, bool, error) {
