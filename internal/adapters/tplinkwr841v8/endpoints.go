@@ -27,26 +27,32 @@ const (
 var Endpoints = map[string]Endpoint{
 	OpStatus: {
 		Op: OpStatus, Path: "/userRpm/StatusRpm.htm", DashboardPage: "Status",
+		Verified:    false,
 		CaptureNote: "capture the Status dashboard request and response",
 	},
 	OpDHCPClients: {
 		Op: OpDHCPClients, Path: "/userRpm/AssignedIpAddrListRpm.htm", DashboardPage: "DHCP Clients",
+		Verified:    false,
 		CaptureNote: "capture the DHCP Clients dashboard request and response",
 	},
 	OpWPS: {
 		Op: OpWPS, Path: "/userRpm/WpsRpm.htm", DashboardPage: "WPS",
+		Verified:    false,
 		CaptureNote: "capture the WPS dashboard request and response",
 	},
 	OpForwarding: {
 		Op: OpForwarding, Path: "/userRpm/VirtualServerRpm.htm", DashboardPage: "Forwarding",
+		Verified:    false,
 		CaptureNote: "capture the DMZ/Virtual Servers dashboard request and response",
 	},
 	OpUPnP: {
 		Op: OpUPnP, Path: "/userRpm/UpnpRpm.htm", DashboardPage: "UPnP",
+		Verified:    false,
 		CaptureNote: "capture the UPnP dashboard request and response",
 	},
 	OpRemoteManagement: {
 		Op: OpRemoteManagement, Path: "/userRpm/AccessCtrlRpm.htm", DashboardPage: "Remote Management",
+		Verified:    false,
 		CaptureNote: "capture the remote-management dashboard request and response",
 	},
 }
