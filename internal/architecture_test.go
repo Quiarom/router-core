@@ -8,7 +8,8 @@ import (
 )
 
 func TestSourceContainsNoMutatingHTTPCalls(t *testing.T) {
-	err := filepath.Walk("../..", func(path string, info os.FileInfo, err error) error {
+	root := repoRoot(t)
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -18,7 +19,7 @@ func TestSourceContainsNoMutatingHTTPCalls(t *testing.T) {
 			}
 			return nil
 		}
-		if strings.HasSuffix(path, "_test.go") {
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
 		body, readErr := os.ReadFile(path)
@@ -39,5 +40,25 @@ func TestSourceContainsNoMutatingHTTPCalls(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// repoRoot walks up from the test's directory to the module root so the scan
+// covers this repository and nothing outside it.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("go.mod not found above the test directory")
+		}
+		dir = parent
 	}
 }
