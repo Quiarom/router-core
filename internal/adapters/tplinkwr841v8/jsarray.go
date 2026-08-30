@@ -3,7 +3,6 @@ package tplinkwr841v8
 import (
 	"strconv"
 	"strings"
-	"unicode"
 )
 
 type TokenKind string
@@ -63,7 +62,7 @@ func isIdent(r byte) bool {
 
 func skipSpaceComments(s string, i int) int {
 	for i < len(s) {
-		if unicode.IsSpace(rune(s[i])) {
+		if isASCIIWhitespace(s[i]) {
 			i++
 			continue
 		}
@@ -85,6 +84,15 @@ func skipSpaceComments(s string, i int) int {
 		break
 	}
 	return i
+}
+
+func isASCIIWhitespace(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r', '\f', '\v':
+		return true
+	default:
+		return false
+	}
 }
 
 func lexArray(s string, i int) ([]Token, bool) {

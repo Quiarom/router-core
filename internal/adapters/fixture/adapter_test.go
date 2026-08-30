@@ -2,6 +2,7 @@ package fixture
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,7 +14,7 @@ import (
 func TestSyntheticFixtureAdapter(t *testing.T) {
 	adapter := New("../../../fixtures/synthetic/tplink-wr841n-v8")
 	info, err := adapter.Identify(context.Background())
-	if err != nil || info.Provenance != domain.ProvenanceFixture || info.FirmwareVersion.Empty() {
+	if err != nil || info.Provenance != domain.ProvenanceFixture || info.Authenticated != domain.Unknown || info.FirmwareVersion.Empty() {
 		t.Fatalf("info=%+v err=%v", info, err)
 	}
 	status, err := adapter.Status(context.Background())
@@ -27,6 +28,22 @@ func TestSyntheticFixtureAdapter(t *testing.T) {
 	security, err := adapter.Security(context.Background())
 	if err != nil || security.WPSEnabled != domain.True || !security.ForwardingRules.Valid {
 		t.Fatalf("security=%+v err=%v", security, err)
+	}
+}
+
+func TestMissingAndEmptyDHCPObservations(t *testing.T) {
+	missing := New(t.TempDir())
+	clients, err := missing.Clients(context.Background())
+	if clients != nil || !errors.Is(err, domain.ErrObservationAbsent) {
+		t.Fatalf("missing clients=%v err=%v", clients, err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "dhcp.html"), []byte(`<html><script>var DHCPDynList = new Array();</script></html>`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	clients, err = New(dir).Clients(context.Background())
+	if err != nil || clients == nil || len(clients) != 0 {
+		t.Fatalf("empty clients=%v err=%v", clients, err)
 	}
 }
 

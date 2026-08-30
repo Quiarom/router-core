@@ -19,6 +19,7 @@ const (
 	OpDHCPClients      = "dhcp-clients"
 	OpWPS              = "wps"
 	OpForwarding       = "forwarding"
+	OpDMZ              = "dmz"
 	OpUPnP             = "upnp"
 	OpRemoteManagement = "remote-management"
 )
@@ -44,6 +45,11 @@ var Endpoints = map[string]Endpoint{
 		Op: OpForwarding, Path: "/userRpm/VirtualServerRpm.htm", DashboardPage: "Forwarding",
 		Verified:    false,
 		CaptureNote: "capture the DMZ/Virtual Servers dashboard request and response",
+	},
+	OpDMZ: {
+		Op: OpDMZ, Path: "/userRpm/DMZRpm.htm", DashboardPage: "DMZ",
+		Verified:    false,
+		CaptureNote: "capture the separate DMZ page; this page split is unconfirmed and DMZ may live on the forwarding page on this build",
 	},
 	OpUPnP: {
 		Op: OpUPnP, Path: "/userRpm/UpnpRpm.htm", DashboardPage: "UPnP",

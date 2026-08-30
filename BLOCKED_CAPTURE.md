@@ -56,11 +56,14 @@ firmware, not a synthetic page.
 ## DMZ and virtual servers (forwarding)
 
 * Dashboard/action: Forwarding > DMZ and Forwarding > Virtual Servers.
-* Request: `GET /userRpm/VirtualServerRpm.htm` for the forwarding page and the
-  exact additional DMZ request if this firmware uses a separate page.
-* Response: complete HTML containing the DMZ state/host and forwarding rule
-  data.
-* Why blocked: endpoint, page split, and rule-count shape are unverified.
+* Request: `GET /userRpm/DMZRpm.htm` for the DMZ page and
+  `GET /userRpm/VirtualServerRpm.htm` for the virtual-server page, each with
+  the authenticated session. If this build combines the pages, capture the
+  combined response and record that fact.
+* Response: complete DMZ HTML containing the DMZ state/host and complete
+  virtual-server HTML containing forwarding rule data.
+* Why blocked: endpoint, page split, and rule-count shape are unverified; DMZ
+  may live on the forwarding page on this build.
 * Sanitization: replace tokens, hostnames, and private client data without
   changing the response structure.
 

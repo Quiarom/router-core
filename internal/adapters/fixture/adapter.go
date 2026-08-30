@@ -3,6 +3,7 @@ package fixture
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -24,8 +25,8 @@ func (a *Adapter) read(name string) ([]byte, bool, error) {
 
 func (a *Adapter) Identify(context.Context) (domain.DeviceInfo, error) {
 	info := domain.DeviceInfo{
-		Vendor: "TP-Link", Model: "TL-WR841N", ManagementAddress: "fixture",
-		Authenticated: domain.True, Provenance: domain.ProvenanceFixture,
+		Vendor: "TP-Link", Model: tplinkwr841v8.ModelName, ManagementAddress: "fixture",
+		Authenticated: domain.Unknown, Provenance: domain.ProvenanceFixture,
 	}
 	if body, exists, err := a.read("status.html"); err != nil {
 		return info, err
@@ -56,7 +57,10 @@ func (a *Adapter) Status(context.Context) (domain.RouterStatus, error) {
 func (a *Adapter) Clients(context.Context) ([]domain.Client, error) {
 	body, exists, err := a.read("dhcp.html")
 	if err != nil || !exists {
-		return nil, err
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: dhcp.html", domain.ErrObservationAbsent)
 	}
 	result, err := tplinkwr841v8.ParseDHCP(body)
 	for i := range result.Clients {
@@ -66,7 +70,7 @@ func (a *Adapter) Clients(context.Context) ([]domain.Client, error) {
 }
 
 func (a *Adapter) Security(context.Context) (domain.SecurityState, error) {
-	var state domain.SecurityState
+	state := domain.SecurityState{Provenance: domain.ProvenanceFixture}
 	pages := []struct {
 		file  string
 		parse func([]byte) (domain.SecurityState, error)
@@ -90,7 +94,7 @@ func (a *Adapter) Security(context.Context) (domain.SecurityState, error) {
 		if err != nil {
 			return state, err
 		}
-		merge(&state, &part)
+		state.Merge(part)
 	}
 	if body, exists, err := a.read("dmz.html"); err != nil {
 		return state, err
@@ -99,44 +103,13 @@ func (a *Adapter) Security(context.Context) (domain.SecurityState, error) {
 		if err != nil {
 			return state, err
 		}
-		merge(&state, &part)
+		state.Merge(part)
 	} else {
 		state.MarkUnsupported("forwardingRules", "no capture for forwardingRules")
 	}
-	state.Provenance = domain.ProvenanceFixture
 	return state, nil
 }
 
 func missingStatus() domain.RouterStatus {
 	return domain.RouterStatus{Reachable: domain.Unknown, WANStatus: domain.WANUnknown, Provenance: domain.ProvenanceFixture}
-}
-
-func merge(dst, src *domain.SecurityState) {
-	if src.WPSEnabled != domain.Unknown {
-		dst.WPSEnabled = src.WPSEnabled
-	}
-	if src.DMZEnabled != domain.Unknown {
-		dst.DMZEnabled = src.DMZEnabled
-	}
-	if src.DMZHost != "" {
-		dst.DMZHost = src.DMZHost
-	}
-	if src.UPnPEnabled != domain.Unknown {
-		dst.UPnPEnabled = src.UPnPEnabled
-	}
-	if src.ActiveUPnPMappings.Valid {
-		dst.ActiveUPnPMappings = src.ActiveUPnPMappings
-	}
-	if src.RemoteManagementEnabled != domain.Unknown {
-		dst.RemoteManagementEnabled = src.RemoteManagementEnabled
-	}
-	if src.RemoteManagementPort.Valid {
-		dst.RemoteManagementPort = src.RemoteManagementPort
-	}
-	if src.ForwardingRules.Valid {
-		dst.ForwardingRules = src.ForwardingRules
-	}
-	for k, v := range src.Unsupported {
-		dst.MarkUnsupported(k, v)
-	}
 }

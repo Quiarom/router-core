@@ -1,7 +1,6 @@
 package tplinkwr841v8
 
 import (
-	"bytes"
 	"strings"
 
 	"github.com/Quiarom/router-core/internal/domain"
@@ -9,10 +8,20 @@ import (
 
 func IsLoginPage(html []byte) bool {
 	s := strings.ToLower(string(html))
-	return bytes.Contains([]byte(s), []byte("loginpassword")) ||
-		bytes.Contains([]byte(s), []byte("loginpwd")) ||
-		(strings.Contains(s, "password") && strings.Contains(s, "login")) ||
-		strings.Contains(s, "name=\"login\"")
+	for _, name := range knownArrays {
+		if strings.Contains(s, strings.ToLower(name)) {
+			return false
+		}
+	}
+	return strings.Contains(s, "loginpassword") ||
+		strings.Contains(s, "loginpwd") ||
+		strings.Contains(s, "name=\"login\"") ||
+		(strings.Contains(s, "password") && strings.Contains(s, "login"))
+}
+
+var knownArrays = []string{
+	"statusPara", "DHCPDynList", "wpsPara", "dmzPara",
+	"upnpPara", "remotePara", "virtualServerPara",
 }
 
 // Classify rejects authentication pages and responses with no recognizable HTML.
@@ -24,7 +33,7 @@ func Classify(html []byte) error {
 	if trimmed == "" || !strings.Contains(strings.ToLower(trimmed), "<") {
 		return domain.ErrUnexpectedResponse
 	}
-	for _, name := range []string{"statusPara", "DHCPDynList", "wpsPara", "dmzPara", "upnpPara", "remotePara", "virtualServerPara"} {
+	for _, name := range knownArrays {
 		if strings.Contains(trimmed, name) {
 			return nil
 		}

@@ -49,4 +49,7 @@ func TestClassify(t *testing.T) {
 	if !errors.Is(Classify(nil), domain.ErrUnexpectedResponse) {
 		t.Fatal("empty page not rejected")
 	}
+	if IsLoginPage([]byte(`<html><body>login password help</body><script>var statusPara = new Array(1);</script></html>`)) {
+		t.Fatal("status page mentioning login/password was misclassified")
+	}
 }

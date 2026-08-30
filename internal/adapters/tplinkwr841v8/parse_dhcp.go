@@ -23,7 +23,7 @@ func ParseDHCP(html []byte) (DHCPResult, error) {
 	if err != nil {
 		return DHCPResult{}, err
 	}
-	result := DHCPResult{}
+	result := DHCPResult{Clients: make([]domain.Client, 0)}
 	for i := 0; i < len(tokens); i += dhcpGroupSize {
 		if i+dhcpGroupSize > len(tokens) {
 			result.Skipped++

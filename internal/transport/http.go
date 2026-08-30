@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -59,11 +58,6 @@ func New(options ...Option) *Client {
 	return c
 }
 
-// NewClient is an explicit alias for New.
-func NewClient(options ...Option) *Client {
-	return New(options...)
-}
-
 // IsAllowedHost reports whether host is a literal local management host.
 // Arbitrary DNS names are intentionally not resolved.
 func IsAllowedHost(host string) bool {
@@ -96,7 +90,7 @@ func (c *Client) dispatch(ctx context.Context, method, rawURL string) ([]byte, i
 		return nil, 0, domain.ErrWriteForbidden
 	}
 	u, err := url.Parse(rawURL)
-	if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, 0, fmt.Errorf("router-core: invalid local URL %q", rawURL)
 	}
 	if !IsAllowedHost(u.Host) {
@@ -118,7 +112,7 @@ func (c *Client) dispatch(ctx context.Context, method, rawURL string) ([]byte, i
 		return nil, resp.StatusCode, fmt.Errorf("%w: read response: %v", domain.ErrUnreachable, err)
 	}
 	if len(body) > maxBodySize {
-		return nil, resp.StatusCode, fmt.Errorf("router-core: response exceeds %s", strconv.FormatInt(maxBodySize, 10))
+		return nil, resp.StatusCode, errors.New("router-core: response exceeds the 2 MiB read cap")
 	}
 	return body, resp.StatusCode, nil
 }

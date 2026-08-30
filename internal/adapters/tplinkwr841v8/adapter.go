@@ -15,6 +15,8 @@ type Adapter struct {
 	transport *transport.Client
 }
 
+const ModelName = "TL-WR841N/ND"
+
 func New(host string, options ...transport.Option) *Adapter {
 	return &Adapter{host: strings.TrimRight(host, "/"), transport: transport.New(options...)}
 }
@@ -45,7 +47,7 @@ func (a *Adapter) fetch(ctx context.Context, op string) ([]byte, error) {
 
 func (a *Adapter) Identify(ctx context.Context) (domain.DeviceInfo, error) {
 	info := domain.DeviceInfo{
-		Vendor: "TP-Link", Model: "TL-WR841N/ND", ManagementAddress: a.host,
+		Vendor: "TP-Link", Model: ModelName, ManagementAddress: a.host,
 		Authenticated: domain.Unknown, Provenance: domain.ProvenanceObserved,
 	}
 	body, _, err := a.transport.Get(ctx, normalizeRoot(a.host))
@@ -78,13 +80,14 @@ func (a *Adapter) Clients(ctx context.Context) ([]domain.Client, error) {
 }
 
 func (a *Adapter) Security(ctx context.Context) (domain.SecurityState, error) {
-	var state domain.SecurityState
+	state := domain.SecurityState{Provenance: domain.ProvenanceObserved}
 	for _, item := range []struct {
 		op    string
 		parse func([]byte) (domain.SecurityState, error)
 	}{
-		{OpWPS, ParseWPS}, {OpForwarding, ParseForwarding}, {OpUPnP, ParseUPnP},
+		{OpWPS, ParseWPS}, {OpDMZ, ParseDMZ}, {OpUPnP, ParseUPnP},
 		{OpRemoteManagement, ParseRemoteManagement},
+		{OpForwarding, ParseForwarding},
 	} {
 		body, err := a.fetch(ctx, item.op)
 		if err != nil {
@@ -94,22 +97,8 @@ func (a *Adapter) Security(ctx context.Context) (domain.SecurityState, error) {
 		if err != nil {
 			return state, err
 		}
-		mergeSecurity(&state, part)
+		state.Merge(part)
 	}
-	dmzBody, err := a.fetch(ctx, OpForwarding)
-	if err != nil {
-		return state, err
-	}
-	part, parseErr := ParseDMZ(dmzBody)
-	if parseErr != nil {
-		return state, parseErr
-	}
-	mergeSecurity(&state, part)
-	part, parseErr = ParseForwarding(dmzBody)
-	if parseErr != nil {
-		return state, parseErr
-	}
-	mergeSecurity(&state, part)
 	return state, nil
 }
 
@@ -118,35 +107,4 @@ func normalizeRoot(host string) string {
 		return strings.TrimRight(host, "/") + "/"
 	}
 	return "http://" + strings.TrimRight(host, "/") + "/"
-}
-
-func mergeSecurity(dst *domain.SecurityState, src domain.SecurityState) {
-	if src.WPSEnabled != domain.Unknown {
-		dst.WPSEnabled = src.WPSEnabled
-	}
-	if src.DMZEnabled != domain.Unknown {
-		dst.DMZEnabled = src.DMZEnabled
-	}
-	if src.DMZHost != "" {
-		dst.DMZHost = src.DMZHost
-	}
-	if src.UPnPEnabled != domain.Unknown {
-		dst.UPnPEnabled = src.UPnPEnabled
-	}
-	if src.ActiveUPnPMappings.Valid {
-		dst.ActiveUPnPMappings = src.ActiveUPnPMappings
-	}
-	if src.RemoteManagementEnabled != domain.Unknown {
-		dst.RemoteManagementEnabled = src.RemoteManagementEnabled
-	}
-	if src.RemoteManagementPort.Valid {
-		dst.RemoteManagementPort = src.RemoteManagementPort
-	}
-	if src.ForwardingRules.Valid {
-		dst.ForwardingRules = src.ForwardingRules
-	}
-	for field, reason := range src.Unsupported {
-		dst.MarkUnsupported(field, reason)
-	}
-	dst.Provenance = src.Provenance
 }

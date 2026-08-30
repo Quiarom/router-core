@@ -125,27 +125,25 @@ func ParseSecurity(html []byte) (domain.SecurityState, error) {
 		return domain.SecurityState{}, err
 	}
 	state := domain.SecurityState{Provenance: domain.ProvenanceObserved}
-	parts := []struct {
-		name  string
-		parse func([]byte) (domain.SecurityState, error)
-	}{
-		{"wpsPara", ParseWPS},
-		{"dmzPara", ParseDMZ},
-		{"upnpPara", ParseUPnP},
-		{"remotePara", ParseRemoteManagement},
-		{"virtualServerPara", ParseForwarding},
+	parsers := map[string]func([]byte) (domain.SecurityState, error){
+		"wpsPara":           ParseWPS,
+		"dmzPara":           ParseDMZ,
+		"upnpPara":          ParseUPnP,
+		"remotePara":        ParseRemoteManagement,
+		"virtualServerPara": ParseForwarding,
 	}
 	found := false
-	for _, part := range parts {
-		if !strings.Contains(string(html), part.name) {
+	for _, name := range knownArrays {
+		parse, ok := parsers[name]
+		if !ok || !strings.Contains(string(html), name) {
 			continue
 		}
 		found = true
-		parsed, err := part.parse(html)
+		parsed, err := parse(html)
 		if err != nil {
 			return domain.SecurityState{}, err
 		}
-		mergeSecurity(&state, parsed)
+		state.Merge(parsed)
 	}
 	if !found {
 		state.MarkUnsupported("security", "no capture for security page")
