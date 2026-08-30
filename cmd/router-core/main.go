@@ -74,8 +74,10 @@ func probe(ctx context.Context, adapter domain.RouterAdapter, opts options) erro
 	if opts.json {
 		return printJSON(info)
 	}
-	auth := "blocked: missing capture"
-	if info.Authenticated == domain.True {
+	auth := "blocked: missing capture (see BLOCKED_CAPTURE.md)"
+	if info.Provenance == domain.ProvenanceFixture {
+		auth = "n/a (fixture replay)"
+	} else if info.Authenticated == domain.True {
 		auth = "success"
 	} else if info.Authenticated == domain.False {
 		auth = "failed: authentication rejected"
@@ -92,7 +94,8 @@ func inspect(ctx context.Context, adapter domain.RouterAdapter, opts options) er
 		return actionable(err)
 	}
 	clients, err := adapter.Clients(ctx)
-	if err != nil {
+	clientsAbsent := errors.Is(err, domain.ErrObservationAbsent)
+	if err != nil && !clientsAbsent {
 		return actionable(err)
 	}
 	security, err := adapter.Security(ctx)
@@ -100,8 +103,10 @@ func inspect(ctx context.Context, adapter domain.RouterAdapter, opts options) er
 		return actionable(err)
 	}
 	var clientCount interface{} = len(clients)
-	if clients == nil {
-		clientCount = "unknown"
+	clientDisplay := fmt.Sprintf("%d", len(clients))
+	if clientsAbsent {
+		clientCount = nil
+		clientDisplay = "unknown"
 	}
 	output := struct {
 		Reachable  domain.Tristate  `json:"reachable"`
@@ -118,8 +123,8 @@ func inspect(ctx context.Context, adapter domain.RouterAdapter, opts options) er
 	if opts.json {
 		return printJSON(output)
 	}
-	fmt.Printf("Reachable: %s\nWAN: %s\nClients: %v\nWPS: %s\nDMZ: %s\nUPnP: %s\nRemote management: %s\n",
-		output.Reachable, output.WAN, output.Clients, output.WPS, output.DMZ,
+	fmt.Printf("Reachable: %s\nWAN: %s\nClients: %s\nWPS: %s\nDMZ: %s\nUPnP: %s\nRemote management: %s\n",
+		output.Reachable, output.WAN, clientDisplay, output.WPS, output.DMZ,
 		output.UPnP, output.RemoteMgmt)
 	return nil
 }
