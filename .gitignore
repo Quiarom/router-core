@@ -1,0 +1,6 @@
+/router-core
+/bin/
+/dist/
+*.test
+*.out
+coverage.*
