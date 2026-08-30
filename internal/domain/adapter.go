@@ -36,4 +36,7 @@ var (
 	// ErrUnverifiedEndpoint: the endpoint recipe has not been confirmed
 	// against real captured traffic and unverified live access is not enabled.
 	ErrUnverifiedEndpoint = errors.New("router-core: endpoint is unverified against captured traffic")
+	// ErrObservationAbsent means the available evidence has no observation for
+	// the requested operation.
+	ErrObservationAbsent = errors.New("router-core: observation is not present in the available evidence")
 )

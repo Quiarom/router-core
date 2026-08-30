@@ -86,3 +86,35 @@ func (s *SecurityState) MarkUnsupported(field, reason string) {
 	}
 	s.Unsupported[field] = reason
 }
+
+// Merge copies observed security fields without changing the destination's
+// provenance.
+func (s *SecurityState) Merge(other SecurityState) {
+	if other.WPSEnabled != Unknown {
+		s.WPSEnabled = other.WPSEnabled
+	}
+	if other.DMZEnabled != Unknown {
+		s.DMZEnabled = other.DMZEnabled
+	}
+	if other.DMZHost != "" {
+		s.DMZHost = other.DMZHost
+	}
+	if other.UPnPEnabled != Unknown {
+		s.UPnPEnabled = other.UPnPEnabled
+	}
+	if other.ActiveUPnPMappings.Valid {
+		s.ActiveUPnPMappings = other.ActiveUPnPMappings
+	}
+	if other.RemoteManagementEnabled != Unknown {
+		s.RemoteManagementEnabled = other.RemoteManagementEnabled
+	}
+	if other.RemoteManagementPort.Valid {
+		s.RemoteManagementPort = other.RemoteManagementPort
+	}
+	if other.ForwardingRules.Valid {
+		s.ForwardingRules = other.ForwardingRules
+	}
+	for field, reason := range other.Unsupported {
+		s.MarkUnsupported(field, reason)
+	}
+}

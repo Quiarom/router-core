@@ -42,3 +42,11 @@ func TestUntrustedSanitizesButPreservesData(t *testing.T) {
 		t.Fatal("expected Modified")
 	}
 }
+
+func TestSecurityMergePreservesProvenance(t *testing.T) {
+	state := SecurityState{Provenance: ProvenanceFixture}
+	state.Merge(SecurityState{WPSEnabled: True, Provenance: ProvenanceObserved})
+	if state.WPSEnabled != True || state.Provenance != ProvenanceFixture {
+		t.Fatalf("merge changed state unexpectedly: %+v", state)
+	}
+}
