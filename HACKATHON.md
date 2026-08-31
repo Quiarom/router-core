@@ -124,6 +124,42 @@ curl http://127.0.0.1:8484/v0/status
   type system. Any future mutation path requires a new ADR,
   capability constant, and explicit operator approval.
 
+## Known runtime limitations (v8.4 firmware)
+
+The TP-Link WR841N v8.4 firmware requires a 16-character session
+token URL prefix (`/<token>/userRpm/<path>`) for several dashboard
+endpoints. The `/` login response on this build does not return
+the token; the verified Basic Auth recipe (ADR 0005) confirms the
+session otherwise works. In practice this means:
+
+- `serve` against this firmware returns `200` for `/healthz` and
+  `/v0/device` (unauthenticated `Identify`).
+- `/v0/status`, `/v0/clients`, and `/v0/security/dmz|upnp|
+  remote-management|forwarding` return `503 unavailable` until the
+  operator supplies the session token. WPS returns the expected
+  `404 unsupported_or_unverified` (the endpoint returns HTTP 501
+  on this firmware).
+- The HTTP-501 endpoints (WPS, UPnP, Remote Management) are
+  reported as `unsupported_or_unverified` even without the token
+  because the firmware rejects them before the path is consulted.
+
+The session-token plumbing exists in the adapter
+(`authedFetchWithFallback`, `SessionTokenForTest`) but the
+production path for fetching the token from this firmware has not
+been written. The frontend should expect the `503 unavailable`
+shape on the token-gated endpoints and surface a clear "session
+expired, restart with token" hint.
+
+## Attribution and third-party notices
+
+The baseline implementation was produced as an overnight
+autonomous pass by Devin AI (Cognition Labs). The post-Phase-0
+work — the verified auth recipe, the `serve` runtime, the cleanup
+pass, and this submission brief — was produced by the router-core
+author. Two public prior-art implementations were studied as
+research (no code copied). See `NOTICE` and
+`docs/PRIOR_ART_PROTOCOL.md` for the full attribution.
+
 ## Repo layout
 
 - `cmd/router-core/` — runtime CLI (`probe`, `inspect`, `serve`).

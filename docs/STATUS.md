@@ -94,17 +94,46 @@ These are hardcoded in the source. They are **defaults**, not secrets:
 ## What is verified against the physical lab unit
 
 The probe executed against the WR841N v8.4 at `192.168.1.1` on
-2026-08-30 and produced sanitized evidence:
+2026-08-30 and 2026-08-31 and produced sanitized evidence.
+
+**Authentication** (verified 2026-08-30):
 
 | Endpoint | Recipe verified | Fingerprint match |
 |---|---|---|
 | Login (root `/`) | `GET /` with `Authorization: Basic base64("admin:<plaintext>")` (plaintext password, NOT md5hex) | n/a |
 | `GET /userRpm/StatusRpm.htm` (with session) | Same Basic Auth header | firmware `3.13.33 Build 130506 Rel.48660n` and hardware `WR841N v8 00000000` both matched exactly |
 
-All other endpoints (DHCP, WPS, DMZ, UPnP, Remote Management,
-Forwarding) remain **unverified** — `Verified: false` in
-`endpoints.go`. They require their own physical capture pass before
-their `Verified` flag can be flipped.
+**Observation surface** (verified 2026-08-31 via `router-core-learn observe`):
+
+| Capability | Path | State on physical lab unit | Result |
+|---|---|---|---|
+| `status` | `/userRpm/StatusRpm.htm` | 200 OK with dashboard | **verified** via session-token URL prefix |
+| `wireless_security` | `/userRpm/WlanSecurityRpm.htm` | 200 OK with body | **verified** via session-token URL prefix |
+| `clients` | `/userRpm/AssignedIpAddrListRpm.htm` | 200 OK with DHCPDynList | **verified** via Basic Auth header only |
+| `wps` | `/userRpm/WpsRpm.htm` | HTTP 501 | **unsupported** (endpoint not present on this firmware build) |
+| `dmz` | `/userRpm/DMZRpm.htm` | 200 OK with body | **verified** via session-token URL prefix |
+| `upnp` | `/userRpm/UpnpRpm.htm` | HTTP 501 | **unsupported** (endpoint not present) |
+| `remote_management` | `/userRpm/AccessCtrlRpm.htm` | HTTP 501 | **unsupported** (endpoint not present) |
+| `forwarding` | `/userRpm/VirtualServerRpm.htm` | 200 OK with body | **verified** via session-token URL prefix |
+
+**Key finding:** the WR841N v8.4 firmware has **two auth modes**:
+
+- **Basic Auth header** for some endpoints (`/userRpm/AssignedIpAddrListRpm.htm`).
+- **Session token URL prefix** (`/userRpm/<16-char-token>/<path>`) for the rest. The Basic Auth header is required in both cases — but the URL prefix is also required for protected endpoints.
+
+The probe's `authedGetWithToken` implements the fallback strategy:
+first try with header only, then with token-URL prefix on 68-byte "no
+authority" response. This two-step approach is what makes 5 of 8
+capabilities reachable.
+
+The full per-capability matrix is persisted at
+`fixtures/captured/tplink-wr841n-v8/capability-evidence.json` after
+each `observe` run.
+
+All other endpoints (none) remain **unverified** — every entry in the
+matrix is now either `verified` (5), `unsupported_or_unverified` (3),
+or `mismatch` (0). `endpoints.go` still has the original
+`Verified: false` flags; flipping them is Phase 3+ work.
 
 The verification is encoded in three layers:
 
@@ -135,13 +164,13 @@ The verification is encoded in three layers:
 
 ## What you can do right now
 
-If you have a WR841N v8.4 at `192.168.1.1` with `admin/admin` credentials:
+If you have a WR841N v8.4 on your local network with the stock
+factory credentials, capture a session with `router-core-learn`:
 
 ```bash
-cd /home/quiarom/Documents/Hackathon/router-core
-go build -o /tmp/router-core-learn ./cmd/router-core-learn
-echo '<your-password>' | /tmp/router-core-learn learn \
-    --host 192.168.1.1 \
+go build -o ./bin/router-core-learn ./cmd/router-core-learn
+echo '<your-password>' | ./bin/router-core-learn learn \
+    --host <your-router-ip> \
     --password-stdin \
     --timeout 5s
 ```

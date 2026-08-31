@@ -1,0 +1,71 @@
+NOTICE
+======
+
+router-core
+Copyright 2025 the router-core authors
+MIT License — see LICENSE
+
+This project includes software, research notes, and design
+contributions from the following third-party sources. None of the
+third-party source code has been copied into this repository; only
+observations and design ideas are reused, in line with each
+source's license.
+
+1. Baseline implementation (Devin AI — Cognition Labs)
+   ------------------------------------------------------------
+   The initial codebase (Go module scaffolding, domain model,
+   transport layer, parser layer, fixture adapter, CLI, tests,
+   CI, ADRs 0001 and 0002, the original OVERNIGHT_REPORT.md, and
+   the BLOCKED_CAPTURE.md capture handoff) was produced as an
+   overnight autonomous pass by Devin AI (Cognition Labs).
+   See https://www.devin.ai for the originating service.
+
+   That work is the "Phase 0 — Bootstrap" entry in
+   docs/STATUS.md and the commit history on branch
+   `feat/wr841n-readonly-adapter` from `cf1f0fe` (initial commit)
+   through `fe3c27b` (overnight implementation report).
+
+   The post-Phase-0 work on the same branch — the verified
+   authentication recipe (commit `0ad9899`, ADR 0005), the
+   `router-core serve` runtime binary, the comment cleanup, the
+   hackathon submission brief (HACKATHON.md), and the cleanup
+   commits `3897a7b` and `a1936b0` — was produced by the router-core
+   author and collaborators, not by Devin.
+
+2. Prior art (research only, no code imported)
+   ------------------------------------------------------------
+   The following public implementations were studied as protocol
+   literature. No source, function, regex, or implementation
+   structure was copied.
+
+   - mkubicek/tpylink — no declared license.
+     https://github.com/mkubicek/tpylink
+     Target: TL-WR841N / TL-WR841ND (FW 3.16.9).
+   - maesoser/tplink_exporter — GPL-3.0.
+     https://github.com/maesoser/tplink_exporter
+     Target: same family.
+   - TP-Link TL-WR841N/ND v8.4 stock firmware documentation
+     (release `3.13.33 Build 130506 Rel.48660n`), used to interpret
+     the verified capture.
+
+   See docs/PRIOR_ART_PROTOCOL.md for the per-observation
+   comparison. The verified Basic Auth recipe diverges from both
+   prior-art implementations (which assumed md5hex hashing);
+   the divergence was discovered by physical capture, not by
+   copying.
+
+3. Third-party Go modules
+   ------------------------------------------------------------
+   The Go module dependencies (declared in go.mod) are distributed
+   under their own licenses. The full dependency license report
+   is not bundled here; run `go mod why -m <module>` or inspect
+   each module's LICENSE file before redistribution.
+
+License compatibility
+=====================
+
+This project is MIT-licensed. The prior-art implementations above
+were studied as observations only, so their license terms do not
+impose obligations on this codebase. Any future contribution that
+imports code under a different license MUST be reviewed for
+compatibility with MIT before merge.
