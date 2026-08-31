@@ -10,9 +10,9 @@ import (
 
 func TestUnverifiedEndpointRefused(t *testing.T) {
 	t.Setenv("ROUTER_ALLOW_UNVERIFIED", "")
-	// Use OpDHCPClients which remains Verified: false until we have
-	// physical capture for that endpoint (per Phase 2 plan).
-	if err := dispatchAllowed(Endpoints[OpDHCPClients]); !errors.Is(err, domain.ErrUnverifiedEndpoint) {
+	// Use OpWPS which remains Verified: false (the WR841N v8.4 firmware
+	// does not implement WPS at all; the endpoint returns HTTP 501).
+	if err := dispatchAllowed(Endpoints[OpWPS]); !errors.Is(err, domain.ErrUnverifiedEndpoint) {
 		t.Fatalf("got %v", err)
 	}
 	t.Setenv("ROUTER_ALLOW_UNVERIFIED", "1")

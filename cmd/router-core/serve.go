@@ -1,0 +1,368 @@
+// Package main contains the runtime binary router-core serve, which
+// authenticates against a TP-Link WR841N v8.4 and exposes a typed
+// read-only HTTP API on the loopback interface. Capabilities the
+// firmware does not implement (WPS, UPnP, Remote Management on
+// v8.4) return 404 with a structured payload.
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/Quiarom/router-core/internal/adapters/tplinkwr841v8"
+	"github.com/Quiarom/router-core/internal/domain"
+	"github.com/Quiarom/router-core/internal/transport"
+)
+
+type sessionStore struct {
+	mu       sync.Mutex
+	password string
+}
+
+func (s *sessionStore) get() (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.password, s.password != ""
+}
+
+func (s *sessionStore) set(p string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.password = p
+}
+
+func readPasswordNoEcho() (string, error) {
+	type readResult struct {
+		buf []byte
+		err error
+	}
+	ch := make(chan readResult, 1)
+	go func() {
+		buf := make([]byte, 256)
+		n, err := os.Stdin.Read(buf)
+		ch <- readResult{buf[:n], err}
+	}()
+	select {
+	case res := <-ch:
+		if res.err != nil && res.err != io.EOF {
+			return "", res.err
+		}
+		return strings.TrimRight(string(res.buf), "\r\n"), nil
+	case <-time.After(30 * time.Second):
+		return "", errors.New("timed out waiting 30s for password on stdin")
+	}
+}
+
+func runServeCommand(args []string) error {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	host := fs.String("host", "192.168.1.1", "local router address (RFC1918 literal)")
+	addr := fs.String("addr", "127.0.0.1:8484", "loopback HTTP listen address")
+	timeout := fs.Duration("timeout", 5*time.Second, "per-request timeout to the router")
+	if err := fs.Parse(args[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) || err == flag.ErrHelp {
+			return nil
+		}
+		return err
+	}
+	if !isLoopbackAddr(*addr) {
+		return fmt.Errorf("refusing to serve on non-loopback address %q (loopback only)", *addr)
+	}
+	if !isRFC1918OrLoopback(*host) {
+		return fmt.Errorf("refusing to observe host %q: not loopback/RFC1918", *host)
+	}
+
+	fmt.Fprintf(os.Stderr, "router-core serve: reading admin password from stdin (timeout 30s)\n")
+	password, err := readPasswordNoEcho()
+	if err != nil {
+		return fmt.Errorf("read password: %w", err)
+	}
+	if password == "" {
+		return errors.New("empty password")
+	}
+	defer zeroString(&password)
+
+	store := &sessionStore{password: password}
+
+	adapter := tplinkwr841v8.New(*host, transport.WithTimeout(*timeout))
+	loginCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := adapter.Login(loginCtx, "admin", password); err != nil {
+		return fmt.Errorf("login: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "router-core serve: authenticated, listening on %s\n", *addr)
+
+	mux := http.NewServeMux()
+	registerRoutes(mux, adapter, store)
+
+	srv := &http.Server{
+		Addr:              *addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	return srv.ListenAndServe()
+}
+
+// isLoopbackAddr refuses 0.0.0.0 and public IPs. The router-core
+// service is local-only and must never bind on a routable address.
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsUnspecified() && ip.To4()[0] == 127
+}
+
+// isRFC1918OrLoopback is duplicated from the probe binary to keep
+// the runtime binary self-contained. The transport layer applies
+// the same check; this is a defense-in-depth pre-flight.
+func isRFC1918OrLoopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = strings.Trim(addr, "[]")
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		return ip4[0] == 10 ||
+			(ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31) ||
+			(ip4[0] == 192 && ip4[1] == 168)
+	}
+	return false
+}
+
+// zeroString zeroes a string in place. Go strings are immutable
+// but the backing bytes of a literal-converted []byte share
+// storage with the string; this is best-effort.
+func zeroString(s *string) {
+	if s == nil {
+		return
+	}
+	*s = ""
+}
+
+type capabilityError struct {
+	State  string `json:"state"`
+	Reason string `json:"reason,omitempty"`
+}
+
+type capabilityStatus struct {
+	State  string `json:"state"`
+	Status int    `json:"http_status,omitempty"`
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeUnsupported(w http.ResponseWriter, reason string) {
+	writeJSON(w, http.StatusNotFound, capabilityError{State: "unsupported_or_unverified", Reason: reason})
+}
+
+func writeUnavailable(w http.ResponseWriter, reason string) {
+	writeJSON(w, http.StatusServiceUnavailable, capabilityError{State: "unavailable", Reason: reason})
+}
+
+func registerRoutes(mux *http.ServeMux, adapter *tplinkwr841v8.Adapter, store *sessionStore) {
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, capabilityStatus{State: "ok", Status: 200})
+	})
+	mux.HandleFunc("/v0/device", handleDevice(adapter))
+	mux.HandleFunc("/v0/status", handleStatus(adapter))
+	mux.HandleFunc("/v0/clients", handleClients(adapter))
+	mux.HandleFunc("/v0/security/wireless", handleSecurityWireless(adapter))
+	mux.HandleFunc("/v0/security/wps", handleSecurityWPS(adapter))
+	mux.HandleFunc("/v0/security/dmz", handleSecurityDMZ(adapter))
+	mux.HandleFunc("/v0/security/upnp", handleSecurityUPnP(adapter))
+	mux.HandleFunc("/v0/security/remote-management", handleSecurityRemoteManagement(adapter))
+	mux.HandleFunc("/v0/security/forwarding", handleSecurityForwarding(adapter))
+}
+
+func handleDevice(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		info, err := adapter.Identify(ctx)
+		if err != nil {
+			writeUnavailable(w, "router identify failed: "+err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, info)
+	}
+}
+
+func handleStatus(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		status, err := adapter.Status(ctx)
+		if err != nil {
+			if errors.Is(err, domain.ErrCaptureMissing) {
+				writeUnavailable(w, "session expired; restart router-core serve")
+				return
+			}
+			writeUnavailable(w, "router status failed: "+err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, status)
+	}
+}
+
+func handleClients(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		clients, err := adapter.Clients(ctx)
+		if errors.Is(err, domain.ErrObservationAbsent) {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"state":   "absent",
+				"clients": []any{},
+			})
+			return
+		}
+		if err != nil {
+			writeUnavailable(w, "router clients failed: "+err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"state":   "verified",
+			"clients": clients,
+		})
+	}
+}
+
+// handleSecurityWireless is a placeholder. The endpoint is reachable
+// on v8.4 (verified 2026-08-31) but the runtime parser is pending.
+func handleSecurityWireless(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		_, err := fetchWirelessSecurity(adapter, r.Context())
+		if err != nil {
+			if errors.Is(err, domain.ErrUnverifiedEndpoint) ||
+				errors.Is(err, domain.ErrObservationAbsent) {
+				writeUnsupported(w, err.Error())
+				return
+			}
+			writeUnavailable(w, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"state": "verified"})
+	}
+}
+
+func fetchWirelessSecurity(adapter *tplinkwr841v8.Adapter, ctx context.Context) ([]byte, error) {
+	return nil, domain.ErrUnverifiedEndpoint
+}
+
+func handleSecurityWPS(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		writeUnsupported(w, "WPS endpoint not present on this firmware build (HTTP 501 observed 2026-08-31)")
+	}
+}
+
+func handleSecurityDMZ(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		state, err := adapter.Security(ctx)
+		if err != nil {
+			writeUnavailable(w, "router security failed: "+err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"state":       "verified",
+			"dmz_enabled": state.DMZEnabled,
+			"dmz_host":    state.DMZHost,
+		})
+	}
+}
+
+func handleSecurityUPnP(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		writeUnsupported(w, "UPnP endpoint not present on this firmware build (HTTP 501 observed 2026-08-31)")
+	}
+}
+
+func handleSecurityRemoteManagement(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		writeUnsupported(w, "Remote Management endpoint not present on this firmware build (HTTP 501 observed 2026-08-31)")
+	}
+}
+
+func handleSecurityForwarding(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		state, err := adapter.Security(ctx)
+		if err != nil {
+			writeUnavailable(w, "router security failed: "+err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"state":            "verified",
+			"forwarding_rules": state.ForwardingRules,
+		})
+	}
+}

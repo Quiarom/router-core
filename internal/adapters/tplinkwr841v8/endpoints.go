@@ -33,8 +33,8 @@ var Endpoints = map[string]Endpoint{
 	},
 	OpDHCPClients: {
 		Op: OpDHCPClients, Path: "/userRpm/AssignedIpAddrListRpm.htm", DashboardPage: "DHCP Clients",
-		Verified:    false,
-		CaptureNote: "capture the DHCP Clients dashboard request and response",
+		Verified:    true,
+		CaptureNote: "verified 2026-08-31 against physical lab unit (3.13.33 Build 130506 Rel.48660n); auth via HTTP Basic header (plaintext password, NOT md5hex) per ADR 0005",
 	},
 	OpWPS: {
 		Op: OpWPS, Path: "/userRpm/WpsRpm.htm", DashboardPage: "WPS",

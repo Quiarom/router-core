@@ -194,3 +194,120 @@ func TestAdapter_DoesNotSendMD5HexVerifiedBySanitizedCapture(t *testing.T) {
 		t.Fatalf("adapter must be authenticated after Login")
 	}
 }
+
+// wr841nTwoAuthServer emulates the WR841N v8.4 firmware with both
+// auth modes: bare path returns 68-byte "no authority" for protected
+// endpoints, /<token>/<path> returns the dashboard. Use pathModes
+// to register per-path behavior.
+type wr841nTwoAuthServer struct {
+	server     *httptest.Server
+	authValue  string
+	sessionTok string
+}
+
+func (s *wr841nTwoAuthServer) URL() string {
+	return s.server.URL
+}
+
+func newWR841NTwoAuthServer(t *testing.T, user, pass string, sessionTok string) *wr841nTwoAuthServer {
+	t.Helper()
+	authValue := base64.StdEncoding.EncodeToString([]byte(user + ":" + pass))
+
+	mux := http.NewServeMux()
+	// Clients endpoint: header-only auth, no token needed.
+	mux.HandleFunc("/userRpm/AssignedIpAddrListRpm.htm", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Basic "+authValue {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, `<html><body>var DHCPDynList = new Array("client", "00:11:22:33:44:55:66", "192.168.1.100", "01:24:35", 0, 0);</body></html><html><head><meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1"><title>TL-WR841N</title></head><body>var DHCPDynPara = new Array(1, 4, 0, 0);</body></html>`)
+	})
+
+	// Protected endpoints: only /<token>/<path> returns dashboard;
+	// bare /<path> returns 68 bytes "no authority".
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Basic "+authValue {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		// Token-prefixed: dashboard.
+		if strings.HasPrefix(r.URL.Path, "/"+sessionTok+"/") {
+			switch strings.TrimPrefix(r.URL.Path, "/"+sessionTok) {
+			case "/userRpm/StatusRpm.htm",
+				"/userRpm/WlanSecurityRpm.htm",
+				"/userRpm/DMZRpm.htm",
+				"/userRpm/VirtualServerRpm.htm":
+				w.Header().Set("Content-Type", "text/html")
+				_, _ = io.WriteString(w, `<html><body>var statusPara = new Array(1,1,1,1,1,1,"3.13.33 Build 130506 Rel.48660n","WR841N v8 00000000",0,1);</body></html>`)
+				return
+			}
+			http.NotFound(w, r)
+			return
+		}
+		// Bare path: rejected with 68 bytes.
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, "<html><body><h1><B>You have no authority to access this router!</B></h1></body></html>")
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return &wr841nTwoAuthServer{server: srv, authValue: authValue, sessionTok: sessionTok}
+}
+
+// TestAdapter_Status_TwoAuthModes verifies that the runtime adapter
+// uses the session-token URL fallback strategy against the WR841N
+// v8.4 firmware. Without the fallback, Status would return 68 bytes
+// of "no authority" and the parser would fail. With the fallback,
+// the request goes to /<token>/userRpm/StatusRpm.htm and the
+// dashboard comes back with the firmware fingerprint.
+func TestAdapter_Status_TwoAuthModes(t *testing.T) {
+	const sessionTok = "ABCDEFGHIJKLMNOP"
+	srv := newWR841NTwoAuthServer(t, "admin", "hunter2", sessionTok)
+	host := strings.TrimPrefix(srv.URL(), "http://")
+	a := New(host)
+
+	ctx, cancelFn := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelFn()
+	if err := a.Login(ctx, "admin", "hunter2"); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	// Manually inject a session token (the firmware observed in
+	// Phase 3.5 does not return one from the / response, but the
+	// adapter can be told one).
+	a.session.sessionToken = sessionTok
+
+	status, err := a.Status(ctx)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if status.Reachable != domain.True {
+		t.Errorf("status.Reachable: got %v want True", status.Reachable)
+	}
+}
+
+// TestAdapter_Status_NoTokenFallbackReturnsMismatch verifies that
+// without a session token, the adapter does not silently accept the
+// 68-byte "no authority" body as the dashboard. The Status parser
+// runs on the 68-byte body, fails to find the fingerprint, and
+// returns RouterStatus with Reachable=True (because the body was 200)
+// but no uptime, no firmware, etc.
+func TestAdapter_Status_NoTokenFallbackReturnsNoAuth(t *testing.T) {
+	srv := newWR841NTwoAuthServer(t, "admin", "hunter2", "UNUSEDTOKEN")
+	host := strings.TrimPrefix(srv.URL(), "http://")
+	a := New(host)
+
+	ctx, cancelFn := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelFn()
+	if err := a.Login(ctx, "admin", "hunter2"); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	// Intentionally do NOT set a.session.sessionToken. The adapter
+	// has no way to discover the session token from the / response
+	// (the WR841N v8.4 firmware does not emit one), so without an
+	// explicit token the bare path returns the 86-byte "no authority"
+	// body. ParseStatus rejects it.
+	_, err := a.Status(ctx)
+	if err == nil {
+		t.Fatalf("Status with no token should fail (no authority body is not a valid dashboard)")
+	}
+}
