@@ -1,0 +1,28 @@
+{
+  "auth_evidence": {
+    "candidate": "basic-auth-plain-header",
+    "method": "GET",
+    "path": "/userRpm/LoginRpm.htm?Save=Save",
+    "cookie_name": "Authorization",
+    "redirect_shape": "/\u003cSESSION_TOKEN\u003e/userRpm/Index.htm",
+    "physical_match": true
+  },
+  "status_evidence": {
+    "request_path": "/\u003cSESSION_TOKEN\u003e/userRpm/StatusRpm.htm",
+    "response_bytes": 25768,
+    "sanitized_bytes": 25560
+  },
+  "physical_fingerprint": {
+    "expected_firmware": "3.13.33 Build 130506 Rel.48660n",
+    "found_firmware": "3.13.33 Build 130506 Rel.48660n",
+    "expected_hardware": "WR841N v8 00000000",
+    "found_hardware": "WR841N v8 00000000",
+    "match": true
+  },
+  "capture": {
+    "date": "2026-08-31T01:58:23Z",
+    "host": "192.168.1.1",
+    "firmware_target": "3.13.33 Build 130506 Rel.48660n",
+    "sanitization_policy": "apply cmd/router-core-learn/sanitize.Default to all persisted bodies; structural redirect token and Authorization material replaced with placeholders; MACs, SSIDs, Wi-Fi keys, password fields redacted; fingerprint (vendor/model/hardware/firmware) preserved"
+  }
+}

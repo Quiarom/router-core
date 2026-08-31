@@ -1,0 +1,96 @@
+{
+  "capture": {
+    "date": "2026-08-31T04:25:53Z",
+    "host": "192.168.1.1",
+    "firmware_target": "3.13.33 Build 130506 Rel.48660n",
+    "sanitization_policy": "cmd/router-core-learn/sanitize applied to every body in memory before persistence; structural session token and Authorization material replaced with placeholders; MACs, SSIDs, Wi-Fi keys, password fields redacted; fingerprint preserved"
+  },
+  "authentication": {
+    "recipe": "GET / with `Authorization: Basic \u003cbase64(admin:plaintext)\u003e` HTTP header (NOT cookie, NOT md5hex)",
+    "header_not_cookie": true,
+    "plain_password": true,
+    "verified_at": "2026-08-30 against physical WR841N v8.4 firmware 3.13.33 Build 130506 Rel.48660n"
+  },
+  "capabilities": {
+    "clients": {
+      "capability": "clients",
+      "display_name": "DHCP Clients",
+      "endpoint": "/userRpm/AssignedIpAddrListRpm.htm",
+      "http_status": 200,
+      "response_bytes": 68,
+      "state": "mismatch",
+      "reason": "200 OK but body only 68 bytes",
+      "sanitized_body_bytes": 68
+    },
+    "dmz": {
+      "capability": "dmz",
+      "display_name": "DMZ",
+      "endpoint": "/userRpm/DMZRpm.htm",
+      "http_status": 200,
+      "response_bytes": 68,
+      "state": "mismatch",
+      "reason": "200 OK but body only 68 bytes",
+      "sanitized_body_bytes": 68
+    },
+    "forwarding": {
+      "capability": "forwarding",
+      "display_name": "Virtual Servers / Forwarding",
+      "endpoint": "/userRpm/VirtualServerRpm.htm",
+      "http_status": 200,
+      "response_bytes": 68,
+      "state": "mismatch",
+      "reason": "200 OK but body only 68 bytes",
+      "sanitized_body_bytes": 68
+    },
+    "remote_management": {
+      "capability": "remote_management",
+      "display_name": "Remote Management",
+      "endpoint": "/userRpm/AccessCtrlRpm.htm",
+      "http_status": 501,
+      "response_bytes": 569,
+      "state": "unsupported_or_unverified",
+      "reason": "HTTP 501 Not Implemented (endpoint not present on this firmware)",
+      "sanitized_body_bytes": 569
+    },
+    "status": {
+      "capability": "status",
+      "display_name": "Status",
+      "endpoint": "/userRpm/StatusRpm.htm",
+      "http_status": 200,
+      "response_bytes": 68,
+      "state": "mismatch",
+      "reason": "200 OK but no fingerprint match",
+      "sanitized_body_bytes": 68
+    },
+    "upnp": {
+      "capability": "upnp",
+      "display_name": "UPnP",
+      "endpoint": "/userRpm/UpnpRpm.htm",
+      "http_status": 501,
+      "response_bytes": 569,
+      "state": "unsupported_or_unverified",
+      "reason": "HTTP 501 Not Implemented (endpoint not present on this firmware)",
+      "sanitized_body_bytes": 569
+    },
+    "wireless_security": {
+      "capability": "wireless_security",
+      "display_name": "Wireless Security",
+      "endpoint": "/userRpm/WlanSecurityRpm.htm",
+      "http_status": 200,
+      "response_bytes": 68,
+      "state": "mismatch",
+      "reason": "200 OK but body only 68 bytes",
+      "sanitized_body_bytes": 68
+    },
+    "wps": {
+      "capability": "wps",
+      "display_name": "WPS",
+      "endpoint": "/userRpm/WpsRpm.htm",
+      "http_status": 501,
+      "response_bytes": 569,
+      "state": "unsupported_or_unverified",
+      "reason": "HTTP 501 Not Implemented (endpoint not present on this firmware)",
+      "sanitized_body_bytes": 569
+    }
+  }
+}

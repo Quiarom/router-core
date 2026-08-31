@@ -28,8 +28,8 @@ const (
 var Endpoints = map[string]Endpoint{
 	OpStatus: {
 		Op: OpStatus, Path: "/userRpm/StatusRpm.htm", DashboardPage: "Status",
-		Verified:    false,
-		CaptureNote: "capture the Status dashboard request and response",
+		Verified:    true,
+		CaptureNote: "verified 2026-08-30 against physical lab unit (3.13.33 Build 130506 Rel.48660n); auth via HTTP Basic header (plaintext password, NOT md5hex) per ADR 0005",
 	},
 	OpDHCPClients: {
 		Op: OpDHCPClients, Path: "/userRpm/AssignedIpAddrListRpm.htm", DashboardPage: "DHCP Clients",

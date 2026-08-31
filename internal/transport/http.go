@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -125,4 +126,61 @@ func (c *Client) Get(ctx context.Context, rawURL string) ([]byte, int, error) {
 // Do is the single request dispatch path. Only GET is permitted.
 func (c *Client) Do(ctx context.Context, method, rawURL string) ([]byte, int, error) {
 	return c.dispatch(ctx, method, rawURL)
+}
+
+// GetWithBasicAuth fetches the local HTTP URL with HTTP Basic
+// Authorization. The header is "Authorization: Basic <base64(user:pass)>"
+// with the plaintext password (NOT pre-hashed). This matches the
+// behavior of a browser's native Basic Auth dialog and the recipe
+// verified against the WR841N v8.4 firmware 3.13.33 Build 130506
+// Rel.48660n on 2026-08-30.
+func (c *Client) GetWithBasicAuth(ctx context.Context, rawURL, user, password string) ([]byte, int, error) {
+	if user == "" || password == "" {
+		return nil, 0, fmt.Errorf("router-core: basic auth requires non-empty user and password")
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, 0, fmt.Errorf("router-core: invalid local URL %q", rawURL)
+	}
+	if !IsAllowedHost(u.Host) {
+		return nil, 0, fmt.Errorf("router-core: host %q is not an allowed local address", u.Host)
+	}
+	auth := base64.StdEncoding.EncodeToString([]byte(user + ":" + password))
+	return c.dispatchWithHeader(ctx, http.MethodGet, u.String(), "Authorization", "Basic "+auth)
+}
+
+// dispatchWithHeader is the same as dispatch but additionally sets a
+// header on the request. The method MUST be GET (the dispatch safety
+// invariant); only the header channel is widened.
+func (c *Client) dispatchWithHeader(ctx context.Context, method, rawURL, headerName, headerValue string) ([]byte, int, error) {
+	if method != http.MethodGet {
+		return nil, 0, domain.ErrWriteForbidden
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, 0, fmt.Errorf("router-core: invalid local URL %q", rawURL)
+	}
+	if !IsAllowedHost(u.Host) {
+		return nil, 0, fmt.Errorf("router-core: host %q is not an allowed local address", u.Host)
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, method, u.String(), nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("router-core: create request: %w", err)
+	}
+	req.Header.Set(headerName, headerValue)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("%w: %v", domain.ErrUnreachable, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize+1))
+	if err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("%w: read response: %v", domain.ErrUnreachable, err)
+	}
+	if len(body) > maxBodySize {
+		return nil, resp.StatusCode, errors.New("router-core: response exceeds the 2 MiB read cap")
+	}
+	return body, resp.StatusCode, nil
 }

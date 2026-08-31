@@ -1,0 +1,8 @@
+{
+  "candidate": "basic-auth-plain-header",
+  "method": "GET",
+  "path": "/userRpm/LoginRpm.htm?Save=Save",
+  "cookie_name": "Authorization",
+  "redirect_shape": "/\u003cSESSION_TOKEN\u003e/userRpm/Index.htm",
+  "physical_match": true
+}
