@@ -6,16 +6,16 @@
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](go.mod)
 [![GMI Cloud × MiniMax Week](https://img.shields.io/badge/GMI_Cloud-MiniMax_Week-2026-08-24_→_2026-09-06-blue)](https://www.gmicloud.ai/minimax-week)
 
-> Local-first, read-only observation layer for legacy consumer
-> routers, with a typed HTTP surface for an AI reasoning layer to
-> consume. Submission for the **GMI Cloud × MiniMax Week**
-> (track: **Reasoning**).
+> A local-first, read-only layer for legacy consumer routers, with
+> a typed HTTP surface that a MiniMax reasoning layer can read.
+> Submission for the **GMI Cloud × MiniMax Week** (track:
+> **Reasoning**).
 >
-> **MiniMax models used:** `MiniMax-M3` (primary reasoning,
-> coding, 1M ctx) and `MiniMax-M2.7` (low-latency fallback),
-> served by [GMI Cloud](https://www.gmicloud.ai) via the
-> OpenRouter gateway. Supporting infrastructure (router, transport,
-> fixtures, tests) uses the open-source stack listed below.
+> **Models used:** `MiniMax-M3` (primary reasoning, 1M context) and
+> `MiniMax-M2.7` (low-latency fallback), served by
+> [GMI Cloud](https://www.gmicloud.ai) via the OpenRouter gateway.
+> The supporting infrastructure (router, transport, fixtures,
+> tests) uses the open-source stack listed below.
 
 ---
 
@@ -46,34 +46,34 @@
 ## What is this?
 
 `router-core` is a local-first, read-only observation layer for
-legacy consumer routers. The current target is the **TP-Link
-TL-WR841N/ND v8.4** stock dashboard (firmware
-`3.13.33 Build 130506 Rel.48660n`). Other vendor families can grow
-from the same domain types.
+legacy consumer routers. The first target is the
+**TP-Link TL-WR841N/ND v8.4** stock dashboard (firmware
+`3.13.33 Build 130506 Rel.48660n`). Other vendor families can use
+the same domain types without sharing the vendor-specific code.
 
-It authenticates against the device, parses the firmware's
-`var name = new Array(...)` JavaScript dashboards deterministically,
-and exposes a typed HTTP API on the loopback interface for a
-downstream AI agent (a MiniMax-driven frontend, a CLI consumer,
-or a small Go program) to consume.
+The runtime authenticates against the router, parses the
+firmware's `var name = new Array(...)` dashboards deterministically,
+and exposes a typed HTTP API on the loopback interface. A
+downstream AI agent, a CLI consumer, or a small Go program can
+read the API.
 
-`router-core` **cannot** change the router's settings, reboot it,
-or do anything destructive. The mutation path is unrepresentable
+The runtime cannot change the router's settings, reboot it, or
+do anything destructive. The mutation path is unrepresentable
 in the type system.
 
 ## Why it exists
 
 Stock consumer-router dashboards from 2013 are not getting
-maintained. The web UI is ugly, missing features, and assumes a
-user willing to click through six pages to answer "is my network
+maintained. The web UI is missing features and assumes a user
+willing to click through six pages to answer "is my network
 exposed?" `router-core` turns the dashboard into a typed API and
-lets a reasoning model answer that question in plain language
+lets a reasoning model answer that question in plain language,
 without the user ever touching a login form.
 
 ## Features
 
 - **Verified authentication recipe** (Basic Auth with plaintext
-  password, NOT md5hex) — captured against the physical lab unit
+  password, NOT md5hex), captured against the physical lab unit
   on 2026-08-30 and documented in
   [ADR 0005](docs/adr/0005-verified-wr841n-auth-recipe.md).
 - **Six read-only capabilities** verified end-to-end against the
@@ -88,14 +88,14 @@ without the user ever touching a login form.
     refused at every layer.
   - 2 MiB response body cap.
   - No cross-host redirects.
-  - Mutations are unrepresentable: no `CapMutate` constant exists
+  - Mutations are unrepresentable. No `CapMutate` constant exists
     in any package runtime code imports.
 - **`Unknown` is first-class.** Absent fields stay `unknown` (or
   an invalid optional integer), never silently `false`. Network-
   originated text is wrapped in `Untrusted` with a `trust:
   "untrusted"` marker, sanitized for display, never treated as
   instructions.
-- **Three layers, vendor-neutral at the bottom:**
+- **Three layers:**
   1. `internal/domain/` — vendor-neutral types and the
      `RouterAdapter` contract.
   2. `internal/transport/` — guarded HTTP client.
@@ -104,8 +104,8 @@ without the user ever touching a login form.
 - **Two binaries:**
   - `router-core` — runtime CLI: `probe`, `inspect`, `serve`.
   - `router-core-learn` — experimental probe and observation
-     capture (5 candidate recipes, sanitized output to
-     `fixtures/captured/`).
+    capture (5 candidate recipes, sanitized output to
+    `fixtures/captured/`).
 - **Fixture-backed adapter** for testing without hardware.
 - **CI** with `gofmt`, `vet`, `build`, `go test -race`.
 
@@ -243,11 +243,12 @@ flowchart TB
   Serve --> Domain
 ```
 
-The **domain layer** is vendor-neutral. The **transport layer**
-is the hard safety boundary. The **adapter layer** knows the
-vendor. A second adapter for, say, an ASUS or MikroTik device
-can be added without touching `internal/domain/` or
-`internal/transport/`.
+`internal/domain/` defines the vendor-neutral types and the
+`RouterAdapter` contract. `internal/transport/` is the hard
+safety boundary: GET only, RFC1918 only, 2 MiB body cap. The
+adapter layer knows the vendor. A second adapter for an ASUS
+or MikroTik device can sit alongside `tplinkwr841v8` without
+touching `domain/` or `transport/`.
 
 ## Repository layout
 
@@ -313,18 +314,18 @@ The TP-Link WR841N v8.4 firmware requires a 16-character session
 token URL prefix (`/<token>/userRpm/<path>`) for several dashboard
 endpoints. The `/` login response on this build does not return
 the token; the verified Basic Auth recipe (ADR 0005) confirms the
-session otherwise works. In practice this means:
+session otherwise works. The practical consequences:
 
 - `serve` against this firmware returns `200` for `/healthz` and
   `/v0/device` (unauthenticated `Identify`).
 - `/v0/status`, `/v0/clients`, and `/v0/security/dmz|upnp|
   remote-management|forwarding` return `503 unavailable` until the
-  operator supplies the session token. WPS returns the expected
-  `404 unsupported_or_unverified` (the endpoint returns HTTP 501
-  on this firmware).
-- The HTTP-501 endpoints (WPS, UPnP, Remote Management) are
-  reported as `unsupported_or_unverified` even without the token
-  because the firmware rejects them before the path is consulted.
+  operator supplies the session token. WPS returns `404
+  unsupported_or_unverified` (the endpoint returns HTTP 501 on
+  this firmware).
+- WPS, UPnP, and Remote Management are reported as
+  `unsupported_or_unverified` even without the token because the
+  firmware rejects them before the path is consulted.
 
 The session-token plumbing exists in the adapter
 (`authedFetchWithFallback`, `SessionTokenForTest`) but the
@@ -377,7 +378,7 @@ the GitHub Actions workflow.
 ## Testing
 
 Eight packages, all green. The tests do not require the physical
-router — they use httptest sidecars that emulate the WR841N v8.4
+router; they use httptest sidecars that emulate the WR841N v8.4
 firmware with the verified Basic Auth recipe.
 
 ```bash
@@ -401,14 +402,17 @@ ROUTER_LIVE_TESTS=1 go test ./internal/adapters/tplinkwr841v8/... -run Live -v
 
 ## Roadmap
 
-- **Phase 6 — One Safe Write.** Add the first mutation (e.g.
-  disabling UPnP) gated by policy, verification, and explicit
-  human approval. Requires ADR 0003 (capability authority) to
-  move from DRAFT to active.
+- **Phase 6 — One Safe Write.** Add the first mutation (for
+  example, disabling UPnP) gated by policy, verification, and
+  explicit human approval. Requires ADR 0003 (capability
+  authority) to move from DRAFT to active.
 - **Per-firmware session-token fetch.** Implement the production
   path that reads the v8.4 session token from
   `/LoginRpm.htm?Save=Save` and forwards it to
   `authedFetchWithFallback`.
+- **Wire the wireless-security parser.** The endpoint is
+  reachable (verified 2026-08-31) but the runtime currently
+  returns 503 unavailable with a clear reason.
 - **Frontend reference implementation.** A small TypeScript or
   SvelteKit frontend that talks to `serve` and to a MiniMax
   model through GMI Cloud via OpenRouter.
@@ -429,7 +433,7 @@ request template is in
 
 ## Attribution and third-party notices
 
-The **baseline implementation** of this project — the Go module
+The baseline implementation of this project — the Go module
 scaffolding, domain model, transport layer, parser layer,
 fixture adapter, original CLI, tests, CI, ADRs 0001 and 0002, the
 original `OVERNIGHT_REPORT.md`, and the `BLOCKED_CAPTURE.md`
@@ -443,24 +447,24 @@ ADR 0005), the `router-core serve` runtime binary, the comment
 cleanup, the `HACKATHON.md` / `NOTICE` / `CODE_OF_CONDUCT.md`
 files, and the cleanup commits `3897a7b`, `a1936b0`, and
 `5304028` — was produced by the router-core author and
-collaborators, not by Devin. **Other AI coding agents
+collaborators, not by Devin. Other AI coding agents
 (MiniMax, Claude, GPT, etc.) may be used for supporting
 infrastructure (parsers, tests, docs) during the
 MiniMax-Week campaign; only the reasoning layer must use
-MiniMax models served by GMI Cloud.**
+MiniMax models served by GMI Cloud.
 
-Two public prior-art implementations were studied as **research
-only, no code imported:**
+Two public prior-art implementations were studied as research
+only. No code was imported:
 
 - [`mkubicek/tpylink`](https://github.com/mkubicek/tpylink) — no
   declared license.
 - [`maesoser/tplink_exporter`](https://github.com/maesoser/tplink_exporter) — GPL-3.0.
-  **Code from this repository was NOT imported**; the GPL license
+  Code from this repository was NOT imported; the GPL license
   would have forced the combined work under GPL, which contradicts
   the MIT target of this project.
 
-The verified Basic Auth recipe (ADR 0005) **diverges** from both
-prior-art implementations (which assumed md5hex hashing). The
+The verified Basic Auth recipe (ADR 0005) diverges from both
+prior-art implementations, which assumed md5hex hashing. The
 divergence was discovered by physical capture, not by copying.
 See [docs/PRIOR_ART_PROTOCOL.md](docs/PRIOR_ART_PROTOCOL.md) for
 the full per-observation comparison and the full attribution in
