@@ -70,6 +70,13 @@ runtime has them available:
 - **`tplink-adapter` / `wr841n-protocol`** — the vendor-
   specific recipes. There is no formal skill yet, but the
   ADRs in `docs/adr/` are the equivalent.
+- **`humanizer`** — bundled at
+  [`.claude/skills/humanizer/SKILL.md`](.claude/skills/humanizer/SKILL.md).
+  Run it on prose before committing documentation; it removes
+  AI writing patterns (35 of them, from Wikipedia's "Signs of
+  AI writing") without changing the facts. Same skill is also
+  available as a Claude plugin or a user-level install via
+  `cp -r .claude/skills/humanizer ~/.claude/skills/`.
 
 ## File conventions
 
@@ -83,6 +90,10 @@ runtime has them available:
   (e.g. `TestAdapter_Login` for `Adapter.Login`).
 - New docs: place in `docs/`; archive obsolete docs to
   `docs/archive/` via `git mv`.
+- Prose in any `.md` file: before committing, run the
+  `humanizer` skill on the changed paragraphs. Keep every fact,
+  URL, code block, table cell, and link target unchanged; only
+  the prose is rewritten.
 
 ## Layout
 
@@ -101,7 +112,10 @@ runtime has them available:
 ├── internal/           # private packages
 ├── docs/               # design + status + ADRs
 ├── fixtures/           # synthetic and captured evidence
-└── .github/            # CI + issue + PR templates
+├── .github/            # CI + issue + PR templates
+└── .claude/
+    └── skills/
+        └── humanizer/  # prose humanizer (Wikipedia AI tells)
 ```
 
 ## Verifying changes
