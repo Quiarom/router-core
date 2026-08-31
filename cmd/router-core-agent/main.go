@@ -210,10 +210,10 @@ type toolCall struct {
 }
 
 type message struct {
-	Role       string    `json:"role"`
-	Content    string    `json:"content,omitempty"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content,omitempty"`
 	ToolCalls  []toolCall `json:"tool_calls,omitempty"`
-	ToolCallID string    `json:"tool_call_id,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
 
 type chatRequest struct {
@@ -225,14 +225,14 @@ type chatRequest struct {
 type chatResponse struct {
 	Choices []struct {
 		Message struct {
-			Role      string    `json:"role"`
-			Content   string    `json:"content"`
+			Role      string     `json:"role"`
+			Content   string     `json:"content"`
 			ToolCalls []toolCall `json:"tool_calls"`
 		} `json:"message"`
 	} `json:"choices"`
 	Error *struct {
 		Message string `json:"message"`
-		Type   string `json:"type"`
+		Type    string `json:"type"`
 	} `json:"error"`
 }
 
