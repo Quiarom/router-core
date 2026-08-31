@@ -1,3 +1,7 @@
+// Package transport is a read-only HTTP client for the local
+// router management pages. It is the hard safety boundary: GET
+// only, loopback or RFC1918 only, 2 MiB body cap, no cross-host
+// redirects, never resolved by DNS.
 package transport
 
 import (
@@ -87,6 +91,12 @@ func IsAllowedHost(host string) bool {
 }
 
 func (c *Client) dispatch(ctx context.Context, method, rawURL string) ([]byte, int, error) {
+	return c.dispatchWithHeaders(ctx, method, rawURL, nil)
+}
+
+// dispatchWithHeaders is the only place that issues HTTP requests.
+// method must be GET; headers may carry Authorization and Referer.
+func (c *Client) dispatchWithHeaders(ctx context.Context, method, rawURL string, headers map[string]string) ([]byte, int, error) {
 	if method != http.MethodGet {
 		return nil, 0, domain.ErrWriteForbidden
 	}
@@ -102,6 +112,9 @@ func (c *Client) dispatch(ctx context.Context, method, rawURL string) ([]byte, i
 	req, err := http.NewRequestWithContext(requestCtx, method, u.String(), nil)
 	if err != nil {
 		return nil, 0, fmt.Errorf("router-core: create request: %w", err)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -131,9 +144,7 @@ func (c *Client) Do(ctx context.Context, method, rawURL string) ([]byte, int, er
 // GetWithBasicAuth fetches the local HTTP URL with HTTP Basic
 // Authorization. The header is "Authorization: Basic <base64(user:pass)>"
 // with the plaintext password (NOT pre-hashed). This matches the
-// behavior of a browser's native Basic Auth dialog and the recipe
-// verified against the WR841N v8.4 firmware 3.13.33 Build 130506
-// Rel.48660n on 2026-08-30.
+// behavior of a browser's native Basic Auth dialog.
 func (c *Client) GetWithBasicAuth(ctx context.Context, rawURL, user, password string) ([]byte, int, error) {
 	if user == "" || password == "" {
 		return nil, 0, fmt.Errorf("router-core: basic auth requires non-empty user and password")
@@ -146,15 +157,19 @@ func (c *Client) GetWithBasicAuth(ctx context.Context, rawURL, user, password st
 		return nil, 0, fmt.Errorf("router-core: host %q is not an allowed local address", u.Host)
 	}
 	auth := base64.StdEncoding.EncodeToString([]byte(user + ":" + password))
-	return c.dispatchWithHeader(ctx, http.MethodGet, u.String(), "Authorization", "Basic "+auth)
+	return c.dispatchWithHeaders(ctx, http.MethodGet, u.String(), map[string]string{
+		"Authorization": "Basic " + auth,
+	})
 }
 
-// dispatchWithHeader is the same as dispatch but additionally sets a
-// header on the request. The method MUST be GET (the dispatch safety
-// invariant); only the header channel is widened.
-func (c *Client) dispatchWithHeader(ctx context.Context, method, rawURL, headerName, headerValue string) ([]byte, int, error) {
-	if method != http.MethodGet {
-		return nil, 0, domain.ErrWriteForbidden
+// GetWithBasicAuthAndReferer is the same as GetWithBasicAuth but
+// also sets a Referer header. The WR841N v8.4 firmware returns
+// "no authority" on /userRpm/<path> requests when the Referer
+// does not point to the parent frameset page. Verified live
+// 2026-08-31 against the lab unit at 192.168.1.1.
+func (c *Client) GetWithBasicAuthAndReferer(ctx context.Context, rawURL, referer, user, password string) ([]byte, int, error) {
+	if user == "" || password == "" {
+		return nil, 0, fmt.Errorf("router-core: basic auth requires non-empty user and password")
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
@@ -163,24 +178,9 @@ func (c *Client) dispatchWithHeader(ctx context.Context, method, rawURL, headerN
 	if !IsAllowedHost(u.Host) {
 		return nil, 0, fmt.Errorf("router-core: host %q is not an allowed local address", u.Host)
 	}
-	requestCtx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(requestCtx, method, u.String(), nil)
-	if err != nil {
-		return nil, 0, fmt.Errorf("router-core: create request: %w", err)
-	}
-	req.Header.Set(headerName, headerValue)
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, 0, fmt.Errorf("%w: %v", domain.ErrUnreachable, err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize+1))
-	if err != nil {
-		return nil, resp.StatusCode, fmt.Errorf("%w: read response: %v", domain.ErrUnreachable, err)
-	}
-	if len(body) > maxBodySize {
-		return nil, resp.StatusCode, errors.New("router-core: response exceeds the 2 MiB read cap")
-	}
-	return body, resp.StatusCode, nil
+	auth := base64.StdEncoding.EncodeToString([]byte(user + ":" + password))
+	return c.dispatchWithHeaders(ctx, http.MethodGet, u.String(), map[string]string{
+		"Authorization": "Basic " + auth,
+		"Referer":       referer,
+	})
 }

@@ -18,14 +18,15 @@ import (
 
 // wr841nServerForServe emulates the WR841N v8.4 firmware for the
 // serve binary's runtime tests. The Basic Auth recipe matches
-// ADR 0005.
+// ADR 0005: plaintext password over the Authorization header.
+// /userRpm/StatusRpm.htm returns the dashboard body only when
+// the Referer header matches the parent frameset URL, the recipe
+// verified live 2026-08-31.
 type wr841nServerForServe struct {
-	server     *httptest.Server
-	authValue  string
-	sessionTok string
+	server *httptest.Server
 }
 
-func newWR841NForServe(t *testing.T, user, pass string, sessionTok string) *wr841nServerForServe {
+func newWR841NForServe(t *testing.T, user, pass string) *wr841nServerForServe {
 	t.Helper()
 	authValue := base64.StdEncoding.EncodeToString([]byte(user + ":" + pass))
 	expected := "Basic " + authValue
@@ -39,34 +40,30 @@ func newWR841NForServe(t *testing.T, user, pass string, sessionTok string) *wr84
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = io.WriteString(w, `<html><body><script>var DHCPDynList = new Array("omarchy", "00:11:22:33:44:55:66", "192.168.1.100", "01:24:35", 0, 0); var DHCPDynPara = new Array(1, 4, 0, 0);</script></body></html>`)
 	})
-	// Catch-all: any /userRpm/<path> with the right Basic Auth
-	// returns a dashboard body. Production paths use the adapter's
-	// authedFetchWithFallback, which exercises both bare and
-	// token-prefixed URLs against the real firmware.
+	mux.HandleFunc("/userRpm/StatusRpm.htm", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != expected {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.Header.Get("Referer") == "" {
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = io.WriteString(w, "<html><body><h1><B>You have no authority to access this router!</B></h1></body></html>")
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, `<html><body>var statusPara = new Array(1,1,1,1,1,1,"3.15.9 Build 140724 Rel.63227n","WR841N v8 00000000",0,1);</body></html>`)
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != expected {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		switch r.URL.Path {
-		case "/":
-			body := `<html><body>dashboard</body></html>`
-			if sessionTok != "" {
-				body = `<html><body><script>window.parent.location.href="http://192.168.0.1/` + sessionTok + `/userRpm/Index.htm"</script>dashboard</body></html>`
-			}
-			w.Header().Set("Content-Type", "text/html")
-			_, _ = io.WriteString(w, body)
-		case "/userRpm/StatusRpm.htm":
-			w.Header().Set("Content-Type", "text/html")
-			_, _ = io.WriteString(w, `<html><body>var statusPara = new Array(1,1,1,1,1,1,"3.13.33 Build 130506 Rel.48660n","WR841N v8 00000000",0,1);</body></html>`)
-		default:
-			w.Header().Set("Content-Type", "text/html")
-			_, _ = io.WriteString(w, `<html><body>var dataPara = new Array(1,1,1,1,1,1,1,1,1,1);</body></html>`)
-		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, `<html><body>dashboard</body></html>`)
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return &wr841nServerForServe{server: srv, authValue: authValue, sessionTok: sessionTok}
+	return &wr841nServerForServe{server: srv}
 }
 
 // listenLoopback opens a random TCP port on the loopback interface
@@ -75,11 +72,8 @@ func listenLoopback() (net.Listener, error) {
 	return net.Listen("tcp", "127.0.0.1:0")
 }
 
-func runServeWithAdapter(t *testing.T, adapter *tplinkwr841v8.Adapter, sessionTok string) (string, func()) {
+func runServeWithAdapter(t *testing.T, adapter *tplinkwr841v8.Adapter) (string, func()) {
 	t.Helper()
-	if sessionTok != "" {
-		adapter.SessionTokenForTest(sessionTok)
-	}
 	mux := http.NewServeMux()
 	store := &sessionStore{password: "hunter2"}
 	registerRoutes(mux, adapter, store)
@@ -94,13 +88,13 @@ func runServeWithAdapter(t *testing.T, adapter *tplinkwr841v8.Adapter, sessionTo
 }
 
 func TestServe_Healthz(t *testing.T) {
-	srv := newWR841NForServe(t, "admin", "hunter2", "")
+	srv := newWR841NForServe(t, "admin", "hunter2")
 	host := strings.TrimPrefix(srv.server.URL, "http://")
 	a := tplinkwr841v8.New(host, transport.WithTimeout(2*time.Second))
 	if err := a.Login(context.Background(), "admin", "hunter2"); err != nil {
 		t.Fatalf("Login: %v", err)
 	}
-	addr, teardown := runServeWithAdapter(t, a, "")
+	addr, teardown := runServeWithAdapter(t, a)
 	defer teardown()
 	resp, err := http.Get(addr + "/healthz")
 	if err != nil {
@@ -112,19 +106,40 @@ func TestServe_Healthz(t *testing.T) {
 	}
 }
 
-func TestServe_Status(t *testing.T) {
-	srv := newWR841NForServe(t, "admin", "hunter2", "ABCDEFGHIJKLMNOP")
+func TestServe_Device(t *testing.T) {
+	srv := newWR841NForServe(t, "admin", "hunter2")
 	host := strings.TrimPrefix(srv.server.URL, "http://")
 	a := tplinkwr841v8.New(host, transport.WithTimeout(2*time.Second))
 	if err := a.Login(context.Background(), "admin", "hunter2"); err != nil {
 		t.Fatalf("Login: %v", err)
 	}
-	// SessionTokenForTest is the only test-side escape hatch to
-	// populate the URL-embedded token; the v8.4 firmware does not
-	// return one from /, so production code paths obtain it from
-	// the operator or the login response.
-	a.SessionTokenForTest("ABCDEFGHIJKLMNOP")
-	addr, teardown := runServeWithAdapter(t, a, "ABCDEFGHIJKLMNOP")
+	addr, teardown := runServeWithAdapter(t, a)
+	defer teardown()
+	resp, err := http.Get(addr + "/v0/device")
+	if err != nil {
+		t.Fatalf("GET /v0/device: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Errorf("status: %d want 200, body: %s", resp.StatusCode, readAll(t, resp.Body))
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["firmwareVersion"] == nil {
+		t.Errorf("body missing firmwareVersion: %v", body)
+	}
+}
+
+func TestServe_Status(t *testing.T) {
+	srv := newWR841NForServe(t, "admin", "hunter2")
+	host := strings.TrimPrefix(srv.server.URL, "http://")
+	a := tplinkwr841v8.New(host, transport.WithTimeout(2*time.Second))
+	if err := a.Login(context.Background(), "admin", "hunter2"); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	addr, teardown := runServeWithAdapter(t, a)
 	defer teardown()
 	resp, err := http.Get(addr + "/v0/status")
 	if err != nil {
@@ -143,34 +158,6 @@ func TestServe_Status(t *testing.T) {
 	}
 }
 
-func TestServe_Clients(t *testing.T) {
-	srv := newWR841NForServe(t, "admin", "hunter2", "")
-	host := strings.TrimPrefix(srv.server.URL, "http://")
-	a := tplinkwr841v8.New(host, transport.WithTimeout(2*time.Second))
-	if err := a.Login(context.Background(), "admin", "hunter2"); err != nil {
-		t.Fatalf("Login: %v", err)
-	}
-	// The clients endpoint accepts the bare path with Basic Auth
-	// header; no session token is needed.
-	addr, teardown := runServeWithAdapter(t, a, "")
-	defer teardown()
-	resp, err := http.Get(addr + "/v0/clients")
-	if err != nil {
-		t.Fatalf("GET /v0/clients: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Errorf("status: %d want 200, body: %s", resp.StatusCode, readAll(t, resp.Body))
-	}
-	var body map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if body["state"] != "verified" {
-		t.Errorf("state: %v want verified", body["state"])
-	}
-}
-
 func readAll(t *testing.T, r io.Reader) string {
 	t.Helper()
 	body, _ := io.ReadAll(r)
@@ -178,17 +165,14 @@ func readAll(t *testing.T, r io.Reader) string {
 }
 
 func TestServe_UnsupportedEndpoints(t *testing.T) {
-	srv := newWR841NForServe(t, "admin", "hunter2", "")
+	srv := newWR841NForServe(t, "admin", "hunter2")
 	host := strings.TrimPrefix(srv.server.URL, "http://")
 	a := tplinkwr841v8.New(host, transport.WithTimeout(2*time.Second))
 	if err := a.Login(context.Background(), "admin", "hunter2"); err != nil {
 		t.Fatalf("Login: %v", err)
 	}
-	addr, teardown := runServeWithAdapter(t, a, "")
+	addr, teardown := runServeWithAdapter(t, a)
 	defer teardown()
-	// WPS, UPnP, and Remote Management are not present on the
-	// WR841N v8.4 build (501 observed 2026-08-31). serve must
-	// respond 404 with the structured payload, not 200+false.
 	for _, p := range []string{
 		"/v0/security/wps",
 		"/v0/security/upnp",

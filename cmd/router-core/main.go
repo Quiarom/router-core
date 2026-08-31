@@ -1,3 +1,9 @@
+// Command router-core is the runtime CLI for local-first,
+// read-only observation of legacy consumer routers. It exposes
+// three subcommands: probe (print device identity), inspect
+// (print status, clients, security), and serve (expose a typed
+// HTTP API on the loopback interface for an AI reasoning
+// frontend).
 package main
 
 import (
@@ -22,13 +28,19 @@ type options struct {
 	fixtures string
 	json     bool
 	timeout  time.Duration
+	addr     string
 }
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	err := run(os.Args[1:])
+	if err == nil {
+		return
 	}
+	if errors.Is(err, flag.ErrHelp) || err == flag.ErrHelp {
+		os.Exit(0)
+	}
+	fmt.Fprintln(os.Stderr, "router-core:", err)
+	os.Exit(1)
 }
 
 func run(args []string) error {
@@ -40,9 +52,16 @@ func run(args []string) error {
 		fmt.Println(version)
 		return nil
 	}
-	if args[0] != "probe" && args[0] != "inspect" {
-		return fmt.Errorf("unknown subcommand %q (use -h for usage)", args[0])
+	switch args[0] {
+	case "probe", "inspect":
+		return runReadCommand(args)
+	case "serve":
+		return runServeCommand(args)
 	}
+	return fmt.Errorf("unknown subcommand %q (use -h for usage)", args[0])
+}
+
+func runReadCommand(args []string) error {
 	opts := options{host: "192.168.0.1", timeout: 5 * time.Second}
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -51,6 +70,9 @@ func run(args []string) error {
 	fs.BoolVar(&opts.json, "json", false, "write JSON")
 	fs.DurationVar(&opts.timeout, "timeout", opts.timeout, "per-request timeout")
 	if err := fs.Parse(args[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) || err == flag.ErrHelp {
+			return nil
+		}
 		return err
 	}
 	var adapter domain.RouterAdapter
@@ -61,6 +83,22 @@ func run(args []string) error {
 	}
 	ctx := context.Background()
 	if args[0] == "probe" {
+		if opts.fixtures == "" {
+			fmt.Fprintf(os.Stderr, "router-core probe: reading admin password from stdin (timeout 30s)\n")
+			password, err := readPasswordNoEcho()
+			if err != nil {
+				return fmt.Errorf("read password: %w", err)
+			}
+			if password == "" {
+				return errors.New("empty password")
+			}
+			defer zeroString(&password)
+			if live, ok := adapter.(*tplinkwr841v8.Adapter); ok {
+				if err := live.Login(ctx, "admin", password); err != nil {
+					return fmt.Errorf("login: %w", err)
+				}
+			}
+		}
 		return probe(ctx, adapter, opts)
 	}
 	return inspect(ctx, adapter, opts)
@@ -156,6 +194,8 @@ func actionable(err error) error {
 }
 
 func usage() {
-	fmt.Println("Usage: router-core <probe|inspect> [--host HOST] [--fixtures DIR] [--json] [--timeout DURATION]")
-	fmt.Println("       router-core --version")
+	fmt.Println(`Usage: router-core <probe|inspect|serve> [flags]
+       router-core --version
+
+Run "router-core <command> --help" for command-specific flags.`)
 }

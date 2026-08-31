@@ -1,6 +1,11 @@
 /router-core
+/router-core-learn
+/router-core-serve
 /bin/
 /dist/
 *.test
 *.out
 coverage.*
+*.bak
+.idea/
+.vscode/
