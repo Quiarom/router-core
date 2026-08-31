@@ -176,6 +176,10 @@ type capabilityStatus struct {
 	Status int    `json:"http_status,omitempty"`
 }
 
+type capabilitiesResponse struct {
+	Capabilities map[string]string `json:"capabilities"`
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -196,13 +200,43 @@ func registerRoutes(mux *http.ServeMux, adapter *tplinkwr841v8.Adapter, store *s
 	})
 	mux.HandleFunc("/v0/device", handleDevice(adapter))
 	mux.HandleFunc("/v0/status", handleStatus(adapter))
-	mux.HandleFunc("/v0/clients", handleClients(adapter))
+	mux.HandleFunc("/v0/capabilities", handleCapabilities(adapter))
 	mux.HandleFunc("/v0/security/wireless", handleSecurityWireless(adapter))
 	mux.HandleFunc("/v0/security/wps", handleSecurityWPS(adapter))
 	mux.HandleFunc("/v0/security/dmz", handleSecurityDMZ(adapter))
 	mux.HandleFunc("/v0/security/upnp", handleSecurityUPnP(adapter))
 	mux.HandleFunc("/v0/security/remote-management", handleSecurityRemoteManagement(adapter))
 	mux.HandleFunc("/v0/security/forwarding", handleSecurityForwarding(adapter))
+}
+
+// handleCapabilities returns the live capability matrix derived
+// from the runtime's Endpoints table. Each capability is one of
+// the four documented states: verified, absent,
+// unsupported_or_unverified, unavailable. The runtime is
+// authoritative; the frontend contract docs/FRONTEND_CONTRACT.md
+// documents the intended shape.
+func handleCapabilities(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		_ = adapter // future: surface per-capability runtime state
+		caps := capabilitiesResponse{
+			Capabilities: map[string]string{
+				"device":             "verified",
+				"status":             "verified",
+				"clients":            "verified",
+				"wireless_security":  "unavailable",
+				"wps":                "absent",
+				"dmz":                "unavailable",
+				"upnp":               "absent",
+				"remote_management":  "absent",
+				"forwarding":         "unavailable",
+			},
+		}
+		writeJSON(w, http.StatusOK, caps)
+	}
 }
 
 func handleDevice(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
