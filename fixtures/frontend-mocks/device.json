@@ -1,0 +1,17 @@
+{
+  "vendor": "TP-Link",
+  "model": "TL-WR841N/ND",
+  "hardwareVersion": {
+    "value": "WR841N v8 00000000",
+    "trust": "untrusted",
+    "source": "router:status"
+  },
+  "firmwareVersion": {
+    "value": "3.15.9 Build 140724 Rel.63227n",
+    "trust": "untrusted",
+    "source": "router:status"
+  },
+  "managementAddress": "192.168.1.1",
+  "authenticated": "true",
+  "provenance": "observed"
+}

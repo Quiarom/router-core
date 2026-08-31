@@ -1,0 +1,1 @@
+{ "state": "unsupported_or_unverified", "reason": "Remote Management endpoint not present on this firmware build (HTTP 501)" }

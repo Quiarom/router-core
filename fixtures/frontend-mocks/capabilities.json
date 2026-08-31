@@ -1,0 +1,13 @@
+{
+  "capabilities": {
+    "device": "verified",
+    "status": "verified",
+    "clients": "verified",
+    "wireless_security": "unverified",
+    "wps": "absent",
+    "dmz": "verified",
+    "upnp": "absent",
+    "remote_management": "absent",
+    "forwarding": "verified"
+  }
+}
