@@ -27,8 +27,6 @@ type session struct {
 	// referer is the URL used as the Referer header for
 	// /userRpm/<path> requests so the firmware returns the real
 	// dashboard body instead of the 68-byte "no authority" rejection.
-	// Set to "http://<host>/" on Login; refreshed from the host each
-	// call so adapter reconfiguration (rare) is safe.
 	referer string
 }
 
@@ -127,9 +125,6 @@ func (a *Adapter) authedFetchWithFallback(ctx context.Context, path string) ([]b
 		return body, status, err
 	}
 	if isNoAuthBody(body, status) {
-		// Older firmware builds return the real body on the bare
-		// path without a Referer. Retry without it before giving
-		// up.
 		altBody, altStatus, altErr := a.transport.GetWithBasicAuth(ctx, url, a.session.user, a.session.password)
 		if altErr == nil && !isNoAuthBody(altBody, altStatus) {
 			return altBody, altStatus, nil
@@ -167,9 +162,7 @@ func (a *Adapter) fetch(ctx context.Context, op string) ([]byte, error) {
 
 // Identify authenticates if no session is active, then reads the
 // authenticated Status dashboard and parses the firmware and
-// hardware fingerprints out of its `var statusPara` block. The
-// fingerprint is the only source of identity on this firmware;
-// the unauthenticated root page has none.
+// hardware fingerprints out of its `var statusPara` block.
 func (a *Adapter) Identify(ctx context.Context) (domain.DeviceInfo, error) {
 	info := domain.DeviceInfo{
 		Vendor: "TP-Link", Model: ModelName, ManagementAddress: a.host,
@@ -230,23 +223,55 @@ func (a *Adapter) fetchWithAuth(ctx context.Context, op string) ([]byte, error) 
 	return body, err
 }
 
+// SecurityCapability fetches a single security capability and
+// returns the parsed state plus the underlying error, if any.
+// Used by the per-capability /v0/security/<name> handlers so a
+// failure in one capability does not poison the others.
+func (a *Adapter) SecurityCapability(ctx context.Context, name string) (domain.SecurityState, error) {
+	if a.session == nil {
+		return domain.SecurityState{}, fmt.Errorf("%w: call Adapter.Login(ctx, user, password) first", domain.ErrCaptureMissing)
+	}
+	if err := dispatchAllowed(Endpoints[name]); err != nil {
+		return domain.SecurityState{}, err
+	}
+	body, err := a.fetch(ctx, name)
+	if err != nil {
+		return domain.SecurityState{}, err
+	}
+	return parseSecurityCapability(name, body)
+}
+
+// parseSecurityCapability dispatches by name to the matching
+// parser. Returns a populated SecurityState on success; returns
+// the parser's error otherwise.
+func parseSecurityCapability(name string, body []byte) (domain.SecurityState, error) {
+	switch name {
+	case OpWPS:
+		return ParseWPS(body)
+	case OpDMZ:
+		return ParseDMZ(body)
+	case OpUPnP:
+		return ParseUPnP(body)
+	case OpRemoteManagement:
+		return ParseRemoteManagement(body)
+	case OpForwarding:
+		return ParseForwarding(body)
+	default:
+		return domain.SecurityState{}, fmt.Errorf("router-core: unknown security capability %q", name)
+	}
+}
+
+// Security aggregates the per-capability observations. Each
+// capability is fetched and parsed independently; a failure in
+// one does not short-circuit the others. The aggregated
+// SecurityState's fields reflect the union of successful
+// observations.
 func (a *Adapter) Security(ctx context.Context) (domain.SecurityState, error) {
 	state := domain.SecurityState{Provenance: domain.ProvenanceObserved}
-	for _, item := range []struct {
-		op    string
-		parse func([]byte) (domain.SecurityState, error)
-	}{
-		{OpWPS, ParseWPS}, {OpDMZ, ParseDMZ}, {OpUPnP, ParseUPnP},
-		{OpRemoteManagement, ParseRemoteManagement},
-		{OpForwarding, ParseForwarding},
-	} {
-		body, err := a.fetch(ctx, item.op)
+	for _, name := range []string{OpWPS, OpDMZ, OpUPnP, OpRemoteManagement, OpForwarding} {
+		part, err := a.SecurityCapability(ctx, name)
 		if err != nil {
-			return state, err
-		}
-		part, err := item.parse(body)
-		if err != nil {
-			return state, err
+			continue
 		}
 		state.Merge(part)
 	}

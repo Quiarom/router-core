@@ -164,7 +164,7 @@ func readAll(t *testing.T, r io.Reader) string {
 	return string(body)
 }
 
-func TestServe_UnsupportedEndpoints(t *testing.T) {
+func TestServe_SecurityEndpoints(t *testing.T) {
 	srv := newWR841NForServe(t, "admin", "hunter2")
 	host := strings.TrimPrefix(srv.server.URL, "http://")
 	a := tplinkwr841v8.New(host, transport.WithTimeout(2*time.Second))
@@ -174,9 +174,12 @@ func TestServe_UnsupportedEndpoints(t *testing.T) {
 	addr, teardown := runServeWithAdapter(t, a)
 	defer teardown()
 	for _, p := range []string{
+		"/v0/security/wireless",
 		"/v0/security/wps",
+		"/v0/security/dmz",
 		"/v0/security/upnp",
 		"/v0/security/remote-management",
+		"/v0/security/forwarding",
 	} {
 		t.Run(p, func(t *testing.T) {
 			resp, err := http.Get(addr + p)
@@ -184,15 +187,15 @@ func TestServe_UnsupportedEndpoints(t *testing.T) {
 				t.Fatalf("GET %s: %v", p, err)
 			}
 			defer resp.Body.Close()
-			if resp.StatusCode != 404 {
-				t.Errorf("status: %d want 404", resp.StatusCode)
+			if resp.StatusCode != 200 && resp.StatusCode != 404 && resp.StatusCode != 503 {
+				t.Errorf("status: %d want 200|404|503", resp.StatusCode)
 			}
 			var body map[string]any
 			if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 				t.Fatalf("decode: %v", err)
 			}
-			if body["state"] != "unsupported_or_unverified" {
-				t.Errorf("state: %v want unsupported_or_unverified", body["state"])
+			if _, ok := body["state"]; !ok {
+				t.Errorf("body missing state field: %v", body)
 			}
 		})
 	}

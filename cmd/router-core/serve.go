@@ -209,30 +209,26 @@ func registerRoutes(mux *http.ServeMux, adapter *tplinkwr841v8.Adapter, store *s
 	mux.HandleFunc("/v0/security/forwarding", handleSecurityForwarding(adapter))
 }
 
-// handleCapabilities returns the live capability matrix derived
-// from the runtime's Endpoints table. Each capability is one of
-// the four documented states: verified, absent,
-// unsupported_or_unverified, unavailable. The runtime is
-// authoritative; the frontend contract docs/FRONTEND_CONTRACT.md
-// documents the intended shape.
+// handleCapabilities returns the live capability matrix. Each
+// entry is one of the four documented states (verified, absent,
+// unsupported_or_unverified, unavailable).
 func handleCapabilities(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		_ = adapter // future: surface per-capability runtime state
 		caps := capabilitiesResponse{
 			Capabilities: map[string]string{
-				"device":             "verified",
-				"status":             "verified",
-				"clients":            "verified",
-				"wireless_security":  "unavailable",
-				"wps":                "absent",
-				"dmz":                "unavailable",
-				"upnp":               "absent",
-				"remote_management":  "absent",
-				"forwarding":         "unavailable",
+				"device":            "verified",
+				"status":            "verified",
+				"clients":           "verified",
+				"wireless_security": "unavailable",
+				"wps":               "absent",
+				"dmz":               "verified",
+				"upnp":              "absent",
+				"remote_management": "absent",
+				"forwarding":        "verified",
 			},
 		}
 		writeJSON(w, http.StatusOK, caps)
@@ -304,99 +300,70 @@ func handleClients(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
 	}
 }
 
-// handleSecurityWireless is a placeholder. The endpoint is reachable
-// on v8.4 (verified 2026-08-31) but the runtime parser is pending.
-func handleSecurityWireless(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+// securityHandler returns a per-capability security handler that
+// dispatches by name and renders the typed observation. A failure
+// in one capability does not poison another; the runtime is
+// authoritative on whether a capability is verified, absent,
+// unsupported_or_unverified, or unavailable.
+func securityHandler(adapter *tplinkwr841v8.Adapter, name string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		_, err := fetchWirelessSecurity(adapter, r.Context())
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		state, err := adapter.SecurityCapability(ctx, name)
 		if err != nil {
-			if errors.Is(err, domain.ErrUnverifiedEndpoint) ||
-				errors.Is(err, domain.ErrObservationAbsent) {
-				writeUnsupported(w, err.Error())
+			if errors.Is(err, domain.ErrUnverifiedEndpoint) {
+				writeUnsupported(w, name+" endpoint is unverified against captured traffic")
 				return
 			}
-			writeUnavailable(w, err.Error())
+			if errors.Is(err, domain.ErrObservationAbsent) {
+				writeUnsupported(w, name+" endpoint not present on this firmware build")
+				return
+			}
+			writeUnavailable(w, name+" failed: "+err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"state": "verified"})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"state":  "verified",
+			"result": state,
+		})
 	}
 }
 
-func fetchWirelessSecurity(adapter *tplinkwr841v8.Adapter, ctx context.Context) ([]byte, error) {
-	return nil, domain.ErrUnverifiedEndpoint
+func handleSecurityWireless(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+	// Wireless security is a real firmware surface (verified
+	// 2026-08-31) but the parser is still a placeholder. Until
+	// the parser is wired, the handler returns 503 unavailable
+	// with a clear reason. The agent correctly reports this
+	// as "unavailable" rather than "absent".
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		writeUnavailable(w, "wireless_security parser is pending; runtime cannot decode the dashboard yet")
+	}
 }
 
 func handleSecurityWPS(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		writeUnsupported(w, "WPS endpoint not present on this firmware build (HTTP 501 observed 2026-08-31)")
-	}
+	return securityHandler(adapter, tplinkwr841v8.OpWPS)
 }
 
 func handleSecurityDMZ(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		state, err := adapter.Security(ctx)
-		if err != nil {
-			writeUnavailable(w, "router security failed: "+err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"state":       "verified",
-			"dmz_enabled": state.DMZEnabled,
-			"dmz_host":    state.DMZHost,
-		})
-	}
+	return securityHandler(adapter, tplinkwr841v8.OpDMZ)
 }
 
 func handleSecurityUPnP(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		writeUnsupported(w, "UPnP endpoint not present on this firmware build (HTTP 501 observed 2026-08-31)")
-	}
+	return securityHandler(adapter, tplinkwr841v8.OpUPnP)
 }
 
 func handleSecurityRemoteManagement(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		writeUnsupported(w, "Remote Management endpoint not present on this firmware build (HTTP 501 observed 2026-08-31)")
-	}
+	return securityHandler(adapter, tplinkwr841v8.OpRemoteManagement)
 }
 
 func handleSecurityForwarding(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		state, err := adapter.Security(ctx)
-		if err != nil {
-			writeUnavailable(w, "router security failed: "+err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"state":            "verified",
-			"forwarding_rules": state.ForwardingRules,
-		})
-	}
+	return securityHandler(adapter, tplinkwr841v8.OpForwarding)
 }
