@@ -9,3 +9,12 @@ coverage.*
 *.bak
 .idea/
 .vscode/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets.*
