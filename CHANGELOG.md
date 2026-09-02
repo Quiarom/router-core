@@ -53,12 +53,15 @@ The next items land on the `develop` branch and merge to
 `main` as a single release once the full MiniMax integration
 is verified. The CHANGELOG will be split at that point.
 
-- **Session-token production path.** The v8.4 firmware requires
-  `/<token>/userRpm/<path>` for several endpoints; the `/`
-  response does not return the token on this build. Production
-  path: `GET /userRpm/LoginRpm.htm?Save=Save` with Basic
-  Auth, extract the structural redirect shape
-  `/<TOKEN>/userRpm/Index.htm`, prefix subsequent calls.
+- **Session-token path: not needed for v8.4.** The v8.4 firmware
+  at `192.168.1.1` (3.15.9 Build 140724) does not expose a login
+  endpoint: `/userRpm/LoginRpm.htm?Save=Save` and the other
+  PA-1/PA-2 paths return HTTP 501 "File not found". The actual
+  recipe is HTTP Basic Auth with the plaintext password on
+  every request, and the v8.4 firmware expects every caller
+  to send it. The `auth-evidence.json` capture that suggested a
+  session token was from an older firmware build and does not
+  match the current state. No production path is needed.
 - **Wireless-security parser.** The endpoint is reachable
   (verified 2026-08-31) but the runtime returns 503 with
   reason "parser is pending". Wire the parser against a
