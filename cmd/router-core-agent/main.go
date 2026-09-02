@@ -73,16 +73,25 @@ func parseFlags(args []string) (options, error) {
 	fs := flag.NewFlagSet("router-core-agent", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	opts := options{
-		routerCoreURL:    "http://127.0.0.1:8484",
-		openrouterURL:    "https://openrouter.ai/api/v1/chat/completions",
-		openrouterModel:  envOrDefault("OPENROUTER_MODEL", "minimax/minimax-m3:free"),
-		openrouterKeyEnv: "OPENROUTER_API_KEY",
+		routerCoreURL: "http://127.0.0.1:8484",
+		// Default: GMI Cloud direct (api.gmi-serving.com). Override
+		// with --openrouter-url to use OpenRouter or any other
+		// OpenAI-compatible chat-completions endpoint.
+		openrouterURL: "https://api.gmi-serving.com/v1/chat/completions",
+		// Default model: MiniMax M3 served by GMICloud. Override
+		// with --model to use a different one (e.g. M2.7 for lower
+		// latency, or any other chat-completions-compatible model).
+		openrouterModel: envOrDefault("GMI_MODEL", "MiniMaxAI/MiniMax-M3"),
+		// Default key env var: GMI_SERVING_API_KEY. Falls back to
+		// OPENROUTER_API_KEY for backward compatibility with the
+		// OpenRouter path.
+		openrouterKeyEnv: envOrDefault("GMI_KEY_ENV", "GMI_SERVING_API_KEY"),
 		timeout:          45 * time.Second,
 	}
 	fs.StringVar(&opts.routerCoreURL, "router-core-url", opts.routerCoreURL, "URL local de router-core serve")
-	fs.StringVar(&opts.openrouterURL, "openrouter-url", opts.openrouterURL, "URL de Chat Completions de OpenRouter")
-	fs.StringVar(&opts.openrouterModel, "model", opts.openrouterModel, "identificador del modelo en OpenRouter")
-	fs.StringVar(&opts.openrouterKeyEnv, "key-env", opts.openrouterKeyEnv, "variable que contiene la clave de OpenRouter")
+	fs.StringVar(&opts.openrouterURL, "openrouter-url", opts.openrouterURL, "URL de Chat Completions (cualquier endpoint compatible con OpenAI)")
+	fs.StringVar(&opts.openrouterModel, "model", opts.openrouterModel, "identificador del modelo (e.g. MiniMaxAI/MiniMax-M3 o minimax/minimax-m3:free)")
+	fs.StringVar(&opts.openrouterKeyEnv, "key-env", opts.openrouterKeyEnv, "variable de entorno que contiene la clave")
 	fs.StringVar(&opts.question, "question", "", "pregunta del usuario, o - para leer stdin")
 	fs.StringVar(&opts.serveAddr, "serve", "", "expone la API del chat en esta dirección loopback, por ejemplo 127.0.0.1:8585")
 	fs.BoolVar(&opts.dryRun, "dry-run", false, "usa el agente determinista sin llamar a OpenRouter")
@@ -497,8 +506,13 @@ func runLive(ctx context.Context, opts options, routerClient *routerCoreClient, 
 		}
 		request.Header.Set("Authorization", "Bearer "+apiKey)
 		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("HTTP-Referer", "https://github.com/Quiarom/router-core")
-		request.Header.Set("X-Title", "router-core")
+		// OpenRouter-specific tracking headers. These are no-ops
+		// on api.gmi-serving.com; including them there is harmless
+		// but pointless. Kept for OpenRouter compatibility.
+		if strings.Contains(opts.openrouterURL, "openrouter.ai") {
+			request.Header.Set("HTTP-Referer", "https://github.com/Quiarom/router-core")
+			request.Header.Set("X-Title", "router-core")
+		}
 
 		response, err := modelClient.Do(request)
 		if err != nil {
