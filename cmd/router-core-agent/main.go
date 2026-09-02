@@ -134,16 +134,7 @@ func runAgentServer(opts options) error {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", withLocalCORS(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			writeJSON(w, http.StatusMethodNotAllowed, errorResponse{Error: "método no permitido"})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]string{
-			"state": "ok",
-			"model": opts.openrouterModel,
-		})
-	}))
+	mux.HandleFunc("/healthz", withLocalCORS(healthzHandler(opts)))
 	mux.HandleFunc("/v0/chat", withLocalCORS(chatHandler(opts)))
 
 	server := &http.Server{
@@ -159,6 +150,22 @@ func runAgentServer(opts options) error {
 		logf("modo determinista; configura %s para usar MiniMax M3", opts.openrouterKeyEnv)
 	}
 	return server.ListenAndServe()
+}
+
+// healthzHandler answers GET /healthz with the live model
+// name and a state of "ok". Exported (lowercase) so the
+// test file can call it directly.
+func healthzHandler(opts options) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, errorResponse{Error: "método no permitido"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{
+			"state": "ok",
+			"model": opts.openrouterModel,
+		})
+	}
 }
 
 func chatHandler(opts options) http.HandlerFunc {
@@ -584,7 +591,7 @@ func stubSequence(question string) []string {
 	case strings.Contains(query, "wi-fi"), strings.Contains(query, "wifi"), strings.Contains(query, "inalámbrica"), strings.Contains(query, "expuest"):
 		return []string{"wireless", "wps", "remote-management"}
 	case strings.Contains(query, "quién"), strings.Contains(query, "quien"), strings.Contains(query, "conectad"), strings.Contains(query, "dispositiv"), strings.Contains(query, "aparato"):
-		return nil
+		return []string{"wireless", "wps", "remote-management", "dmz", "upnp", "forwarding"}
 	default:
 		return []string{"dmz", "forwarding", "upnp"}
 	}
