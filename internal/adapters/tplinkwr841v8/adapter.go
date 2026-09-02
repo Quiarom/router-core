@@ -151,15 +151,6 @@ func (a *Adapter) endpointURL(op string) (string, error) {
 	return strings.TrimRight(a.host, "/") + endpoint.Path, nil
 }
 
-func (a *Adapter) fetch(ctx context.Context, op string) ([]byte, error) {
-	rawURL, err := a.endpointURL(op)
-	if err != nil {
-		return nil, err
-	}
-	body, _, err := a.authedFetch(ctx, rawURL)
-	return body, err
-}
-
 // Identify authenticates if no session is active, then reads the
 // authenticated Status dashboard and parses the firmware and
 // hardware fingerprints out of its `var statusPara` block.
@@ -223,6 +214,25 @@ func (a *Adapter) fetchWithAuth(ctx context.Context, op string) ([]byte, error) 
 	return body, err
 }
 
+// FetchWirelessSecurity fetches the wireless-security page and
+// returns the parsed observation. Exported so the serve
+// handler can call it directly; the typed return value avoids
+// the SecurityState aggregation that does not fit this
+// capability's data shape (SSID, cipher, key renewal, etc.).
+func (a *Adapter) FetchWirelessSecurity(ctx context.Context) (WirelessSecurity, error) {
+	if a.session == nil {
+		return WirelessSecurity{}, fmt.Errorf("%w: call Adapter.Login(ctx, user, password) first", domain.ErrCaptureMissing)
+	}
+	if err := dispatchAllowed(Endpoints[OpWireless]); err != nil {
+		return WirelessSecurity{}, err
+	}
+	body, err := a.fetchWithAuth(ctx, OpWireless)
+	if err != nil {
+		return WirelessSecurity{}, err
+	}
+	return ParseWirelessSecurity(body)
+}
+
 // SecurityCapability fetches a single security capability and
 // returns the parsed state plus the underlying error, if any.
 // Used by the per-capability /v0/security/<name> handlers so a
@@ -234,7 +244,7 @@ func (a *Adapter) SecurityCapability(ctx context.Context, name string) (domain.S
 	if err := dispatchAllowed(Endpoints[name]); err != nil {
 		return domain.SecurityState{}, err
 	}
-	body, err := a.fetch(ctx, name)
+	body, err := a.fetchWithAuth(ctx, name)
 	if err != nil {
 		return domain.SecurityState{}, err
 	}

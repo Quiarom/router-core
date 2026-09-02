@@ -9,11 +9,23 @@ import (
 	"github.com/Quiarom/router-core/internal/domain"
 )
 
-const fixtureDir = "../../../fixtures/synthetic/tplink-wr841n-v8"
+const (
+	fixtureDir         = "../../../fixtures/synthetic/tplink-wr841n-v8"
+	capturedFixtureDir = "../../../fixtures/captured/tplink-wr841n-v8"
+)
 
 func fixture(t *testing.T, name string) []byte {
 	t.Helper()
 	body, err := os.ReadFile(filepath.Join(fixtureDir, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func capturedFixture(t *testing.T, name string) []byte {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(capturedFixtureDir, name))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +63,55 @@ func TestParsersHappyPath(t *testing.T) {
 	}
 }
 
+func TestParseWirelessSecurity_LiveCapture(t *testing.T) {
+	// Sanitized capture from the live lab unit at 192.168.1.1,
+	// firmware 3.15.9 Build 140724 Rel.63227n, captured 2026-08-31.
+	// The PMK field is replaced with a placeholder by the
+	// sanitize package; the SSID is preserved because it is a
+	// public form value, not a secret.
+	body := capturedFixture(t, "wireless-security.html")
+	got, err := ParseWirelessSecurity(body)
+	if err != nil {
+		t.Fatalf("ParseWirelessSecurity: %v", err)
+	}
+	if !got.Enabled {
+		t.Errorf("Enabled: got false, want true (wlanPara[0] = 8 on the v8.4 build)")
+	}
+	if got.SSID != "TP-LINK_CBEC16" {
+		t.Errorf("SSID: got %q, want %q", got.SSID, "TP-LINK_CBEC16")
+	}
+	if got.SecurityTypeRaw != 3 {
+		t.Errorf("SecurityTypeRaw: got %d, want 3 (WPA2-PSK auto on v8.4 1-indexed)", got.SecurityTypeRaw)
+	}
+	if got.SecurityType != "wpa2-psk" {
+		t.Errorf("SecurityType: got %q, want %q", got.SecurityType, "wpa2-psk")
+	}
+	if got.Cipher != "332" {
+		t.Errorf("Cipher: got %q, want %q", got.Cipher, "332")
+	}
+	if got.KeyRenewalSecs != 1812 {
+		t.Errorf("KeyRenewalSecs: got %d, want 1812", got.KeyRenewalSecs)
+	}
+	if !got.HasPreSharedKey {
+		t.Errorf("HasPreSharedKey: got false, want true (the sanitized PMK placeholder is non-empty)")
+	}
+	if len(got.Raw) == 0 {
+		t.Errorf("Raw: got empty, want a JSON-encoded wlanPara array")
+	}
+}
+
+func TestParseWirelessSecurity_LoginPage(t *testing.T) {
+	if _, err := ParseWirelessSecurity(fixture(t, "login_page.html")); !errors.Is(err, domain.ErrUnauthenticated) {
+		t.Fatalf("login err=%v", err)
+	}
+}
+
+func TestParseWirelessSecurity_Empty(t *testing.T) {
+	if _, err := ParseWirelessSecurity(fixture(t, "empty.html")); !errors.Is(err, domain.ErrUnexpectedResponse) {
+		t.Fatalf("empty err=%v", err)
+	}
+}
+
 func TestParserFailuresAndUnknown(t *testing.T) {
 	if _, err := ParseDHCP(fixture(t, "login_page.html")); !errors.Is(err, domain.ErrUnauthenticated) {
 		t.Fatalf("login err=%v", err)
@@ -79,6 +140,6 @@ func TestAdversarialDataIsSanitized(t *testing.T) {
 		t.Fatal("injection text was not preserved")
 	}
 	if !result.Clients[1].Name.Modified || result.Clients[1].Name.Value() != "badname[31m" {
-		t.Fatalf("control characters not sanitized: %#v", result.Clients[1].Name)
+		t.Fatalf("control characters not sanitized: %#v", result.Clients[1])
 	}
 }
