@@ -200,6 +200,7 @@ func registerRoutes(mux *http.ServeMux, adapter *tplinkwr841v8.Adapter, store *s
 	})
 	mux.HandleFunc("/v0/device", handleDevice(adapter))
 	mux.HandleFunc("/v0/status", handleStatus(adapter))
+	mux.HandleFunc("/v0/clients", handleClients(adapter))
 	mux.HandleFunc("/v0/capabilities", handleCapabilities(adapter))
 	mux.HandleFunc("/v0/security/wireless", handleSecurityWireless(adapter))
 	mux.HandleFunc("/v0/security/wps", handleSecurityWPS(adapter))

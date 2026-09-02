@@ -1,17 +1,6 @@
-// Command router-core-agent is the Phase 5 reasoning layer for
-// router-core. It connects to a running router-core serve over the
-// loopback HTTP API, gathers device identity + capability matrix,
-// sends the user's natural-language question to MiniMax M3 via
-// OpenRouter, and streams the model's tool-call trace to stderr.
-// The final answer goes to stdout.
-//
-// The agent is strictly read-only. Every tool call hits a
-// GET endpoint under /v0/. The agent never mutates the router.
-//
-// If OPENROUTER_API_KEY is not set, or --dry-run is passed, the
-// agent uses a deterministic stub that demonstrates the same
-// trace shape with a fixed tool sequence. This is the default for
-// local development and CI.
+// Command router-core-agent implementa la capa de razonamiento de router-core.
+// Consulta exclusivamente la API local de observación y usa MiniMax M3 mediante
+// OpenRouter para responder preguntas sobre el router.
 package main
 
 import (
@@ -22,13 +11,18 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 )
 
-const version = "0.1.0"
+const (
+	version         = "0.2.0"
+	maxQuestionSize = 64 << 10
+)
 
 type options struct {
 	routerCoreURL    string
@@ -36,87 +30,299 @@ type options struct {
 	openrouterModel  string
 	openrouterKeyEnv string
 	question         string
+	serveAddr        string
 	dryRun           bool
 	timeout          time.Duration
 }
 
+type chatInput struct {
+	Question string `json:"question"`
+}
+
+type observationStep struct {
+	Tool       string          `json:"tool"`
+	Path       string          `json:"path"`
+	HTTPStatus int             `json:"http_status"`
+	Result     json.RawMessage `json:"result"`
+}
+
+type agentResult struct {
+	Answer string            `json:"answer"`
+	Model  string            `json:"model"`
+	Mode   string            `json:"mode"`
+	Steps  []observationStep `json:"steps"`
+}
+
+type errorResponse struct {
+	Error string `json:"error"`
+}
+
 func main() {
-	opts := parseFlags(os.Args[1:])
+	opts, err := parseFlags(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "router-core-agent:", err)
+		os.Exit(2)
+	}
 	if err := run(opts); err != nil {
 		fmt.Fprintln(os.Stderr, "router-core-agent:", err)
 		os.Exit(1)
 	}
 }
 
-func parseFlags(args []string) options {
+func parseFlags(args []string) (options, error) {
 	fs := flag.NewFlagSet("router-core-agent", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	opts := options{
 		routerCoreURL:    "http://127.0.0.1:8484",
 		openrouterURL:    "https://openrouter.ai/api/v1/chat/completions",
-		openrouterModel:  "minimax/minimax-m3:free",
+		openrouterModel:  envOrDefault("OPENROUTER_MODEL", "minimax/minimax-m3:free"),
 		openrouterKeyEnv: "OPENROUTER_API_KEY",
-		timeout:          30 * time.Second,
+		timeout:          45 * time.Second,
 	}
-	fs.StringVar(&opts.routerCoreURL, "router-core-url", opts.routerCoreURL, "URL of the running router-core serve (loopback only)")
-	fs.StringVar(&opts.openrouterURL, "openrouter-url", opts.openrouterURL, "OpenRouter chat-completions URL")
-	fs.StringVar(&opts.openrouterModel, "model", opts.openrouterModel, "OpenRouter model id (default minimax/minimax-m3:free)")
-	fs.StringVar(&opts.openrouterKeyEnv, "key-env", opts.openrouterKeyEnv, "environment variable that holds the OpenRouter API key")
-	fs.StringVar(&opts.question, "question", "", "user question (or read from stdin if -)")
-	fs.BoolVar(&opts.dryRun, "dry-run", false, "skip the OpenRouter call and use a deterministic stub")
-	fs.DurationVar(&opts.timeout, "timeout", opts.timeout, "HTTP timeout for both router-core and OpenRouter calls")
-	_ = fs.Parse(args)
-	return opts
+	fs.StringVar(&opts.routerCoreURL, "router-core-url", opts.routerCoreURL, "URL local de router-core serve")
+	fs.StringVar(&opts.openrouterURL, "openrouter-url", opts.openrouterURL, "URL de Chat Completions de OpenRouter")
+	fs.StringVar(&opts.openrouterModel, "model", opts.openrouterModel, "identificador del modelo en OpenRouter")
+	fs.StringVar(&opts.openrouterKeyEnv, "key-env", opts.openrouterKeyEnv, "variable que contiene la clave de OpenRouter")
+	fs.StringVar(&opts.question, "question", "", "pregunta del usuario, o - para leer stdin")
+	fs.StringVar(&opts.serveAddr, "serve", "", "expone la API del chat en esta dirección loopback, por ejemplo 127.0.0.1:8585")
+	fs.BoolVar(&opts.dryRun, "dry-run", false, "usa el agente determinista sin llamar a OpenRouter")
+	fs.DurationVar(&opts.timeout, "timeout", opts.timeout, "tiempo máximo por consulta")
+	if err := fs.Parse(args); err != nil {
+		return options{}, err
+	}
+	return opts, nil
+}
+
+func envOrDefault(name, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		return value
+	}
+	return fallback
 }
 
 func run(opts options) error {
+	if err := validateLoopbackURL(opts.routerCoreURL); err != nil {
+		return fmt.Errorf("URL de router-core inválida: %w", err)
+	}
+	if opts.serveAddr != "" {
+		return runAgentServer(opts)
+	}
+
 	question := opts.question
 	if question == "-" {
-		data, err := io.ReadAll(os.Stdin)
+		data, err := io.ReadAll(io.LimitReader(os.Stdin, maxQuestionSize))
 		if err != nil {
-			return fmt.Errorf("read question from stdin: %w", err)
+			return fmt.Errorf("leer pregunta desde stdin: %w", err)
 		}
 		question = strings.TrimSpace(string(data))
 	}
 	if question == "" {
-		return errors.New("question is required: pass --question or pipe via stdin")
+		return errors.New("la pregunta es obligatoria; usa --question o stdin")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), opts.timeout)
+	result, err := executeQuestion(context.Background(), opts, question)
+	if err != nil {
+		return err
+	}
+	fmt.Println(result.Answer)
+	return nil
+}
+
+func runAgentServer(opts options) error {
+	if !isLoopbackAddr(opts.serveAddr) {
+		return fmt.Errorf("se rechaza --serve %q: solo se permite loopback", opts.serveAddr)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", withLocalCORS(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, errorResponse{Error: "método no permitido"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{
+			"state": "ok",
+			"model": opts.openrouterModel,
+		})
+	}))
+	mux.HandleFunc("/v0/chat", withLocalCORS(chatHandler(opts)))
+
+	server := &http.Server{
+		Addr:              opts.serveAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      opts.timeout + 5*time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	logf("API de chat disponible en http://%s/v0/chat", opts.serveAddr)
+	logf("router-core=%s model=%s", opts.routerCoreURL, opts.openrouterModel)
+	if opts.dryRun || os.Getenv(opts.openrouterKeyEnv) == "" {
+		logf("modo determinista; configura %s para usar MiniMax M3", opts.openrouterKeyEnv)
+	}
+	return server.ListenAndServe()
+}
+
+func chatHandler(opts options) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, errorResponse{Error: "método no permitido"})
+			return
+		}
+
+		reader := http.MaxBytesReader(w, r.Body, maxQuestionSize)
+		defer reader.Close()
+		var input chatInput
+		if err := json.NewDecoder(reader).Decode(&input); err != nil {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "cuerpo JSON inválido"})
+			return
+		}
+		input.Question = strings.TrimSpace(input.Question)
+		if input.Question == "" {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "la pregunta no puede estar vacía"})
+			return
+		}
+
+		result, err := executeQuestion(r.Context(), opts, input.Question)
+		if err != nil {
+			logf("consulta fallida: %v", err)
+			writeJSON(w, http.StatusBadGateway, errorResponse{Error: err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	}
+}
+
+func withLocalCORS(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			if !isLocalOrigin(origin) {
+				writeJSON(w, http.StatusForbidden, errorResponse{Error: "origen no permitido"})
+				return
+			}
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		}
+		next(w, r)
+	}
+}
+
+func isLocalOrigin(rawOrigin string) bool {
+	parsed, err := url.Parse(rawOrigin)
+	if err != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func validateLoopbackURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return err
+	}
+	if parsed.Scheme != "http" {
+		return errors.New("el esquema debe ser http")
+	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return errors.New("la URL no puede incluir credenciales, query ni fragmento")
+	}
+	host := parsed.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return errors.New("el host debe ser loopback")
+	}
+	return nil
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func executeQuestion(parent context.Context, opts options, question string) (agentResult, error) {
+	ctx, cancel := context.WithTimeout(parent, opts.timeout)
 	defer cancel()
 
-	rc := newRouterCoreClient(opts.routerCoreURL, opts.timeout)
-	device, err := rc.get(ctx, "/v0/device")
+	routerClient := newRouterCoreClient(opts.routerCoreURL, opts.timeout)
+	device, err := routerClient.get(ctx, "/v0/device")
 	if err != nil {
-		return fmt.Errorf("device: %w", err)
+		return agentResult{}, fmt.Errorf("consultar dispositivo: %w", err)
 	}
-	status, err := rc.get(ctx, "/v0/status")
-	if err != nil {
-		logf("status unavailable: %v", err)
+	status, statusErr := routerClient.get(ctx, "/v0/status")
+	if statusErr != nil {
+		status = observation{Path: "/v0/status", Status: http.StatusServiceUnavailable, Body: json.RawMessage(`{"state":"unavailable"}`)}
 	}
-	caps, err := rc.get(ctx, "/v0/capabilities")
+	capabilities, err := routerClient.get(ctx, "/v0/capabilities")
 	if err != nil {
-		return fmt.Errorf("capabilities: %w", err)
+		return agentResult{}, fmt.Errorf("consultar capacidades: %w", err)
+	}
+	clients, clientsErr := routerClient.get(ctx, "/v0/clients")
+	if clientsErr != nil {
+		clients = observation{
+			Path:   "/v0/clients",
+			Status: http.StatusServiceUnavailable,
+			Body:   json.RawMessage(`{"state":"unavailable"}`),
+		}
 	}
 
-	logf("connected to %s", opts.routerCoreURL)
-	logf("device  = %s", compactJSON(device))
-	logf("status  = %s", compactJSON(status))
-	logf("caps    = %s", compactJSON(caps))
-	logf("question = %q", question)
-
-	apiKey := os.Getenv(opts.openrouterKeyEnv)
-	useStub := opts.dryRun || apiKey == ""
-	if useStub {
-		logf("using deterministic stub (set %s to use MiniMax M3 live)", opts.openrouterKeyEnv)
-		return runStub(ctx, rc, device, status, caps, question)
+	steps := []observationStep{
+		stepFromObservation("get_device", device),
+		stepFromObservation("get_status", status),
+		stepFromObservation("get_clients", clients),
+		stepFromObservation("get_capabilities", capabilities),
 	}
-	logf("calling %s (model=%s)", opts.openrouterURL, opts.openrouterModel)
-	return runLive(ctx, opts, rc, apiKey, device, status, caps, question)
+	logf("pregunta=%q", question)
+
+	apiKey := strings.TrimSpace(os.Getenv(opts.openrouterKeyEnv))
+	if opts.dryRun || apiKey == "" {
+		return runStub(ctx, routerClient, opts.openrouterModel, question, steps)
+	}
+	return runLive(ctx, opts, routerClient, apiKey, device.Body, status.Body, clients.Body, capabilities.Body, question, steps)
+}
+
+func stepFromObservation(toolName string, value observation) observationStep {
+	return observationStep{
+		Tool:       toolName,
+		Path:       value.Path,
+		HTTPStatus: value.Status,
+		Result:     value.Body,
+	}
 }
 
 func logf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "router-core-agent: "+format+"\n", args...)
+}
+
+type observation struct {
+	Path   string
+	Status int
+	Body   json.RawMessage
 }
 
 type routerCoreClient struct {
@@ -131,210 +337,271 @@ func newRouterCoreClient(baseURL string, timeout time.Duration) *routerCoreClien
 	}
 }
 
-// get returns the raw JSON body of a /v0/ endpoint, regardless of
-// HTTP status. Non-2xx on /v0/ is a structured response (state
-// field), not a transport error.
-func (c *routerCoreClient) get(ctx context.Context, path string) (json.RawMessage, error) {
+func (c *routerCoreClient) get(ctx context.Context, path string) (observation, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
-		return nil, err
+		return observation{}, err
 	}
-	resp, err := c.http.Do(req)
+	response, err := c.http.Do(req)
 	if err != nil {
-		return nil, err
+		return observation{}, err
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 2<<20))
+	if err != nil {
+		return observation{}, err
+	}
 	if len(body) == 0 {
-		body = json.RawMessage(fmt.Sprintf(`{"http_status":%d}`, resp.StatusCode))
+		body = []byte(fmt.Sprintf(`{"http_status":%d}`, response.StatusCode))
 	}
-	return json.RawMessage(body), nil
+	if !json.Valid(body) {
+		return observation{}, fmt.Errorf("%s devolvió una respuesta que no es JSON", path)
+	}
+	return observation{Path: path, Status: response.StatusCode, Body: json.RawMessage(body)}, nil
 }
 
-func compactJSON(b json.RawMessage) string {
-	if len(b) == 0 {
+func compactJSON(body json.RawMessage) string {
+	if len(body) == 0 {
 		return "<absent>"
 	}
-	var out bytes.Buffer
-	if err := json.Compact(&out, b); err != nil {
-		return string(b)
+	var output bytes.Buffer
+	if err := json.Compact(&output, body); err != nil {
+		return string(body)
 	}
-	return out.String()
+	return output.String()
 }
 
-type tool struct {
+type functionDefinition struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	Parameters  map[string]any `json:"parameters"`
 }
 
-var securityTool = tool{
-	Name:        "get_security",
-	Description: "GET /v0/security/<name> on the local router-core serve. Returns the structured security observation for the named capability (wireless, wps, dmz, upnp, remote-management, forwarding). 503 means the runtime cannot satisfy it right now; 404 means the firmware does not implement it.",
-	Parameters: map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"name": map[string]any{
-				"type": "string",
-				"enum": []string{"wireless", "wps", "dmz", "upnp", "remote-management", "forwarding"},
-			},
+type openRouterTool struct {
+	Type     string             `json:"type"`
+	Function functionDefinition `json:"function"`
+}
+
+var clientsTool = openRouterTool{
+	Type: "function",
+	Function: functionDefinition{
+		Name:        "get_clients",
+		Description: "Consulta GET /v0/clients en router-core y devuelve las concesiones DHCP observadas. No determina por sí sola que un equipo sea confiable.",
+		Parameters: map[string]any{
+			"type":                 "object",
+			"properties":           map[string]any{},
+			"additionalProperties": false,
 		},
-		"required": []string{"name"},
 	},
 }
 
-func buildSystemPrompt(device, status, caps json.RawMessage) string {
-	var b strings.Builder
-	b.WriteString("You are a read-only network auditor for a single home router.\n")
-	b.WriteString("Your job: answer the operator's question in plain language by gathering one observation at a time, then summarizing Observed facts, Potential concerns, Recommendations, and any Action that would require explicit operator approval (you must never perform mutations yourself).\n\n")
-	b.WriteString("Never invent values. If a tool returns state \"absent\" or \"unavailable\" or \"unsupported_or_unverified\", report that as-is. Do not collapse to true/false.\n")
-	b.WriteString("Emit exactly one tool call per turn. After the evidence is sufficient, respond with the final answer and no further tool calls.\n\n")
-	b.WriteString("DEVICE\n")
-	b.WriteString(compactJSON(device))
-	b.WriteString("\n\nSTATUS\n")
-	if len(status) > 0 {
-		b.WriteString(compactJSON(status))
-	} else {
-		b.WriteString("<unavailable>")
-	}
-	b.WriteString("\n\nCAPABILITIES\n")
-	b.WriteString(compactJSON(caps))
-	b.WriteString("\n\nAvailable tools:\n")
-	b.WriteString("- get_security(name): GET /v0/security/<name>. Use it to inspect one capability at a time.\n")
-	return b.String()
+var securityTool = openRouterTool{
+	Type: "function",
+	Function: functionDefinition{
+		Name:        "get_security",
+		Description: "Consulta GET /v0/security/<name> en router-core. Devuelve una observación estructurada y nunca modifica el router.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{
+					"type": "string",
+					"enum": []string{"wireless", "wps", "dmz", "upnp", "remote-management", "forwarding"},
+				},
+			},
+			"required":             []string{"name"},
+			"additionalProperties": false,
+		},
+	},
 }
 
-type toolCall struct {
-	Name      string         `json:"name"`
-	Arguments map[string]any `json:"arguments"`
+func buildSystemPrompt(device, status, clients, capabilities json.RawMessage) string {
+	return fmt.Sprintf(`Eres un auditor de redes domésticas de solo lectura.
+Responde siempre en español claro y basa cada afirmación exclusivamente en las observaciones entregadas.
+Nunca inventes valores ni asegures que un equipo es legítimo solo por tener una concesión DHCP.
+Distingue verified, absent, unsupported_or_unverified y unavailable. No los conviertas en verdaderos o falsos.
+Puedes pedir exactamente una observación por turno con get_clients o get_security. Cuando tengas evidencia suficiente, responde sin más herramientas.
+Resume: hechos observados, límites de la evidencia, posibles riesgos y recomendaciones. Nunca afirmes que realizaste cambios.
+
+DISPOSITIVO
+%s
+
+ESTADO
+%s
+
+APARATOS OBSERVADOS
+%s
+
+CAPACIDADES
+%s`, compactJSON(device), compactJSON(status), compactJSON(clients), compactJSON(capabilities))
+}
+
+type toolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+type openRouterToolCall struct {
+	ID       string           `json:"id"`
+	Type     string           `json:"type"`
+	Function toolCallFunction `json:"function"`
 }
 
 type message struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content,omitempty"`
-	ToolCalls  []toolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Role       string               `json:"role"`
+	Content    string               `json:"content,omitempty"`
+	ToolCalls  []openRouterToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string               `json:"tool_call_id,omitempty"`
 }
 
 type chatRequest struct {
-	Model    string    `json:"model"`
-	Messages []message `json:"messages"`
-	Tools    []tool    `json:"tools"`
+	Model    string           `json:"model"`
+	Messages []message        `json:"messages"`
+	Tools    []openRouterTool `json:"tools"`
 }
 
 type chatResponse struct {
 	Choices []struct {
-		Message struct {
-			Role      string     `json:"role"`
-			Content   string     `json:"content"`
-			ToolCalls []toolCall `json:"tool_calls"`
-		} `json:"message"`
+		Message message `json:"message"`
 	} `json:"choices"`
 	Error *struct {
 		Message string `json:"message"`
-		Type    string `json:"type"`
 	} `json:"error"`
 }
 
-func runLive(ctx context.Context, opts options, rc *routerCoreClient, apiKey string, device, status, caps json.RawMessage, question string) error {
-	history := []message{{Role: "system", Content: buildSystemPrompt(device, status, caps)}}
+func runLive(ctx context.Context, opts options, routerClient *routerCoreClient, apiKey string, device, status, clients, capabilities json.RawMessage, question string, steps []observationStep) (agentResult, error) {
+	history := []message{
+		{Role: "system", Content: buildSystemPrompt(device, status, clients, capabilities)},
+		{Role: "user", Content: question},
+	}
+	modelClient := &http.Client{Timeout: opts.timeout}
+
 	for range 8 {
-		history = append(history, message{Role: "user", Content: question})
-		req := chatRequest{
+		requestBody, err := json.Marshal(chatRequest{
 			Model:    opts.openrouterModel,
 			Messages: history,
-			Tools:    []tool{securityTool},
-		}
-		body, _ := json.Marshal(req)
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, opts.openrouterURL, bytes.NewReader(body))
+			Tools:    []openRouterTool{clientsTool, securityTool},
+		})
 		if err != nil {
-			return err
+			return agentResult{}, fmt.Errorf("codificar solicitud al modelo: %w", err)
 		}
-		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-		httpReq.Header.Set("Content-Type", "application/json")
-		resp, err := rc.http.Do(httpReq)
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, opts.openrouterURL, bytes.NewReader(requestBody))
 		if err != nil {
-			return fmt.Errorf("openrouter: %w", err)
+			return agentResult{}, err
 		}
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-		resp.Body.Close()
-		if resp.StatusCode/100 != 2 {
-			return fmt.Errorf("openrouter HTTP %d: %s", resp.StatusCode, compactJSON(respBody))
+		request.Header.Set("Authorization", "Bearer "+apiKey)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("HTTP-Referer", "https://github.com/Quiarom/router-core")
+		request.Header.Set("X-Title", "router-core")
+
+		response, err := modelClient.Do(request)
+		if err != nil {
+			return agentResult{}, fmt.Errorf("conectar con OpenRouter: %w", err)
 		}
+		responseBody, readErr := io.ReadAll(io.LimitReader(response.Body, 2<<20))
+		response.Body.Close()
+		if readErr != nil {
+			return agentResult{}, fmt.Errorf("leer respuesta de OpenRouter: %w", readErr)
+		}
+		if response.StatusCode/100 != 2 {
+			return agentResult{}, fmt.Errorf("OpenRouter respondió HTTP %d: %s", response.StatusCode, compactJSON(responseBody))
+		}
+
 		var parsed chatResponse
-		if err := json.Unmarshal(respBody, &parsed); err != nil {
-			return fmt.Errorf("openrouter decode: %w", err)
+		if err := json.Unmarshal(responseBody, &parsed); err != nil {
+			return agentResult{}, fmt.Errorf("decodificar respuesta de OpenRouter: %w", err)
 		}
 		if parsed.Error != nil {
-			return fmt.Errorf("openrouter: %s", parsed.Error.Message)
+			return agentResult{}, fmt.Errorf("OpenRouter: %s", parsed.Error.Message)
 		}
 		if len(parsed.Choices) == 0 {
-			return errors.New("openrouter: no choices in response")
+			return agentResult{}, errors.New("OpenRouter no devolvió alternativas")
 		}
-		choice := parsed.Choices[0].Message
-		history = append(history, message{Role: "assistant", Content: choice.Content, ToolCalls: choice.ToolCalls})
-		if len(choice.ToolCalls) == 0 {
-			fmt.Println(choice.Content)
-			return nil
-		}
-		for _, tc := range choice.ToolCalls {
-			name, _ := tc.Arguments["name"].(string)
-			if name == "" {
-				name = tc.Name
+
+		assistantMessage := parsed.Choices[0].Message
+		history = append(history, assistantMessage)
+		if len(assistantMessage.ToolCalls) == 0 {
+			answer := strings.TrimSpace(assistantMessage.Content)
+			if answer == "" {
+				return agentResult{}, errors.New("MiniMax devolvió una respuesta vacía")
 			}
-			logf("tool call -> get_security(%q)", name)
-			body, err := rc.get(ctx, "/v0/security/"+name)
+			return agentResult{Answer: answer, Model: opts.openrouterModel, Mode: "live", Steps: steps}, nil
+		}
+
+		for _, call := range assistantMessage.ToolCalls {
+			path := ""
+			if call.Function.Name == "get_clients" {
+				path = "/v0/clients"
+			} else if call.Function.Name == "get_security" {
+				var arguments struct {
+					Name string `json:"name"`
+				}
+				if err := json.Unmarshal([]byte(call.Function.Arguments), &arguments); err != nil {
+					return agentResult{}, fmt.Errorf("argumentos inválidos para get_security: %w", err)
+				}
+				if !isAllowedSecurityCapability(arguments.Name) {
+					return agentResult{}, fmt.Errorf("capacidad de seguridad no permitida: %q", arguments.Name)
+				}
+				path = "/v0/security/" + arguments.Name
+			} else {
+				return agentResult{}, fmt.Errorf("herramienta no permitida: %s", call.Function.Name)
+			}
+			observed, err := routerClient.get(ctx, path)
 			if err != nil {
-				logf("tool error: %v", err)
-				body = json.RawMessage(fmt.Sprintf(`{"error":%q}`, err.Error()))
+				observed = observation{Path: path, Status: http.StatusServiceUnavailable, Body: mustJSON(errorResponse{Error: err.Error()})}
 			}
-			logf("result    -> %s", compactJSON(body))
-			history = append(history, message{Role: "tool", ToolCallID: tc.Name, Content: string(body)})
+			steps = append(steps, stepFromObservation(call.Function.Name, observed))
+			logf("%s -> HTTP %d", call.Function.Name, observed.Status)
+			history = append(history, message{
+				Role:       "tool",
+				ToolCallID: call.ID,
+				Content:    string(observed.Body),
+			})
 		}
 	}
-	return errors.New("agent loop exceeded 8 turns without a final answer")
+	return agentResult{}, errors.New("el agente superó ocho turnos sin producir una respuesta final")
+}
+
+func isAllowedSecurityCapability(name string) bool {
+	switch name {
+	case "wireless", "wps", "dmz", "upnp", "remote-management", "forwarding":
+		return true
+	default:
+		return false
+	}
+}
+
+func mustJSON(value any) json.RawMessage {
+	body, err := json.Marshal(value)
+	if err != nil {
+		return json.RawMessage(`{"error":"no se pudo codificar el error"}`)
+	}
+	return json.RawMessage(body)
 }
 
 func stubSequence(question string) []string {
-	q := strings.ToLower(question)
+	query := strings.ToLower(question)
 	switch {
-	case strings.Contains(q, "wi-fi") || strings.Contains(q, "wifi") || strings.Contains(q, "wireless") || strings.Contains(q, "exposed"):
+	case strings.Contains(query, "wi-fi"), strings.Contains(query, "wifi"), strings.Contains(query, "inalámbrica"), strings.Contains(query, "expuest"):
 		return []string{"wireless", "wps", "remote-management"}
-	case strings.Contains(q, "who") || strings.Contains(q, "connected") || strings.Contains(q, "devices") || strings.Contains(q, "clients"):
-		return []string{"wireless", "wps", "remote-management", "dmz", "upnp", "forwarding"}
+	case strings.Contains(query, "quién"), strings.Contains(query, "quien"), strings.Contains(query, "conectad"), strings.Contains(query, "dispositiv"), strings.Contains(query, "aparato"):
+		return nil
 	default:
-		return []string{"wireless", "wps", "dmz", "upnp", "remote-management", "forwarding"}
+		return []string{"dmz", "forwarding", "upnp"}
 	}
 }
 
-func runStub(ctx context.Context, rc *routerCoreClient, device, status, caps json.RawMessage, question string) error {
+func runStub(ctx context.Context, routerClient *routerCoreClient, model, question string, steps []observationStep) (agentResult, error) {
 	sequence := stubSequence(question)
 	for _, name := range sequence {
-		logf("tool call -> get_security(%q)", name)
-		body, err := rc.get(ctx, "/v0/security/"+name)
+		observed, err := routerClient.get(ctx, "/v0/security/"+name)
 		if err != nil {
-			logf("tool error: %v", err)
-			body = json.RawMessage(fmt.Sprintf(`{"error":%q}`, err.Error()))
+			return agentResult{}, fmt.Errorf("consultar seguridad %s: %w", name, err)
 		}
-		logf("result    -> %s", compactJSON(body))
+		steps = append(steps, stepFromObservation("get_security", observed))
 	}
-	fmt.Println(stubAnswer(question, sequence))
-	return nil
-}
 
-func stubAnswer(question string, sequence []string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Question: %s\n\n", question)
-	fmt.Fprintf(&b, "Observed facts\n")
-	fmt.Fprintf(&b, "  - Reviewed %d security observations: %s.\n", len(sequence), strings.Join(sequence, ", "))
-	fmt.Fprintf(&b, "  - Wireless security: parser not yet wired; runtime reports unavailable.\n")
-	fmt.Fprintf(&b, "  - WPS, UPnP, Remote Management: absent on this firmware build (HTTP 501 from the device).\n")
-	fmt.Fprintf(&b, "  - DMZ, Forwarding: runtime reports unavailable until the parser is wired.\n\n")
-	fmt.Fprintf(&b, "Potential concern\n")
-	fmt.Fprintf(&b, "  - The wireless security surface has not been parsed by the runtime yet. Without the parse, the agent cannot tell whether WPA2 is on, the pre-shared key has any weakness, or an open SSID exists.\n\n")
-	fmt.Fprintf(&b, "Recommendation\n")
-	fmt.Fprintf(&b, "  - Capture the wireless security dashboard response and wire the parser. Re-run this question against the live router. Until then, the safe answer is: ask the operator to confirm WPA2 is enabled and WPS is off from the device's web UI.\n\n")
-	fmt.Fprintf(&b, "Action requiring explicit operator approval\n")
-	fmt.Fprintf(&b, "  - None. The runtime is read-only; any device-side change must be initiated by the operator through the router's own admin interface, not by this agent.\n")
-	return b.String()
+	answer := "Modo de demostración: revisé las observaciones disponibles en router-core. " +
+		"La API de MiniMax no está configurada, así que no debo elaborar una conclusión inteligente ni inventar datos. " +
+		"Configura OPENROUTER_API_KEY y vuelve a consultar para obtener el análisis de MiniMax M3."
+	return agentResult{Answer: answer, Model: model, Mode: "stub", Steps: steps}, nil
 }
