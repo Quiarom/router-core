@@ -3,17 +3,18 @@ import { cva } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const badgeVariants = cva(
-  "inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+  "inline-flex items-center border px-2 py-0.5 text-xs font-mono font-bold uppercase transition-colors focus:outline-none",
   {
     variants: {
       variant: {
-        default: "border-transparent bg-slate-800 text-slate-100",
-        secondary: "border-transparent bg-slate-700 text-slate-200",
-        outline: "text-slate-300 border-slate-700",
-        verified: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
-        absent: "border-slate-600/40 bg-slate-800/40 text-slate-400",
-        unverified: "border-amber-500/30 bg-amber-500/10 text-amber-400",
-        unavailable: "border-rose-500/30 bg-rose-500/10 text-rose-400",
+        default: "border-neutral-800 bg-neutral-900 text-neutral-300",
+        secondary: "border-neutral-800 bg-neutral-800 text-neutral-400",
+        outline: "text-neutral-300 border-neutral-700",
+        verified: "border-emerald-500/40 bg-emerald-500/10 text-emerald-400",
+        absent: "border-neutral-800 bg-neutral-900 text-neutral-500",
+        unverified: "border-amber-500/40 bg-amber-500/10 text-amber-400",
+        unavailable: "border-rose-500/40 bg-rose-500/10 text-rose-400",
+        primary: "border-primary bg-primary/10 text-primary",
       },
     },
     defaultVariants: {

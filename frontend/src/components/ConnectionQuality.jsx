@@ -1,13 +1,13 @@
 import React, { useState } from "react";
 import { 
   CheckCircle2, 
-  RotateCw
+  RotateCw,
+  Activity
 } from "lucide-react";
 
-export function NetworkComparisonChart() {
-  const [activeMetric, setActiveMetric] = useState("latency");
+export function ConnectionQuality() {
+  const [activeMetric, setActiveMetric] = useState("download");
   const [isTesting, setIsTesting] = useState(false);
-  const [testCount, setTestCount] = useState(1);
   const [hoverIndex, setHoverIndex] = useState(null);
 
   const timelineData = {
@@ -16,42 +16,43 @@ export function NetworkComparisonChart() {
       unit: "ms",
       beforeAvg: "86 ms",
       afterAvg: "18 ms",
-      diff: "-79%",
+      diff: "-79% de demora",
       pointsBefore: [82, 115, 94, 130, 88, 145, 92, 120, 78, 110],
       pointsAfter:  [19, 18, 17, 18, 19, 17, 18, 18, 19, 17],
       yMax: 160,
-      description: "Menor es mejor. Mide el tiempo de respuesta. Bajar de 86ms a 18ms elimina las demoras por completo."
+      description: "Menor es mejor. Bajar de 86ms a 18ms elimina las demoras por completo en llamadas y navegación."
     },
     download: {
       label: "Velocidad de Descarga",
       unit: "Mbps",
       beforeAvg: "24.5 Mbps",
       afterAvg: "94.8 Mbps",
-      diff: "+287%",
+      diff: "+287% de velocidad",
       pointsBefore: [22, 19, 28, 14, 25, 20, 31, 18, 23, 26],
       pointsAfter:  [92, 95, 94, 96, 93, 97, 95, 94, 98, 96],
       yMax: 110,
-      description: "Mayor es mejor. La velocidad a la que cargan videos y páginas web. Casi 4 veces más veloz."
+      description: "Mayor es mejor. Con 95 Mbps puedes reproducir contenido 4K en varios dispositivos a la vez sin interrupciones."
     },
     jitter: {
       label: "Estabilidad / Jitter",
       unit: "ms",
       beforeAvg: "24 ms",
       afterAvg: "2 ms",
-      diff: "-91%",
+      diff: "-91% de variación",
       pointsBefore: [25, 34, 18, 40, 22, 38, 19, 29, 32, 21],
       pointsAfter:  [2, 2, 3, 1, 2, 2, 2, 3, 2, 2],
       yMax: 50,
-      description: "Menor es mejor. Indica si la señal sufre altibajos. Con 2ms la llamada no se congela."
+      description: "Menor es mejor. Indica si la señal sufre altibajos; con 2ms la transmisión de datos es totalmente estable."
     }
   };
 
   const current = timelineData[activeMetric];
 
+  // Larger graph dimensions for prominent display
   const width = 800;
-  const height = 220;
+  const height = 280;
   const paddingX = 40;
-  const paddingY = 30;
+  const paddingY = 32;
 
   const getCoordinates = (points, yMax) => {
     const step = (width - paddingX * 2) / (points.length - 1);
@@ -76,7 +77,6 @@ export function NetworkComparisonChart() {
     setIsTesting(true);
     setTimeout(() => {
       setIsTesting(false);
-      setTestCount((c) => c + 1);
     }, 1000);
   };
 
@@ -88,6 +88,9 @@ export function NetworkComparisonChart() {
           <h2 className="text-xl sm:text-2xl font-black uppercase tracking-tight text-white font-sans">
             Comparativa de Conexión
           </h2>
+          <p className="text-xs text-neutral-400 font-mono mt-0.5">
+            Diagnóstico continuo de respuesta, velocidad y estabilidad en el router
+          </p>
         </div>
 
         <button
@@ -100,66 +103,95 @@ export function NetworkComparisonChart() {
         </button>
       </div>
 
-      {/* Minimal Telemetry Columns (Enlarged & Clear) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 pt-1 font-mono">
+      {/* 4 Emphasized Metric Cards: Centered numbers, emphasized labels, bigger percentages */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 font-mono">
         {/* Latency */}
-        <div 
+        <button
+          type="button"
           onClick={() => setActiveMetric("latency")}
-          className={`border-l-2 pl-3 space-y-1 cursor-pointer transition-colors ${
-            activeMetric === "latency" ? "border-primary" : "border-neutral-800 hover:border-neutral-600"
+          className={`flex flex-col items-center justify-center text-center p-5 border-2 transition-all cursor-pointer ${
+            activeMetric === "latency"
+              ? "border-primary bg-primary/10 shadow-sm"
+              : "border-neutral-800 bg-neutral-900 hover:border-neutral-600"
           }`}
         >
-          <span className="text-neutral-500 uppercase text-xs block font-medium">LATENCIA / PING:</span>
-          <div className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+          <span className="text-xs sm:text-sm font-bold uppercase tracking-wider text-neutral-400">
+            LATENCIA / PING
+          </span>
+          <div className="text-2xl sm:text-3xl lg:text-4xl font-black text-white mt-1.5 tracking-tight">
             18 <span className="text-sm font-bold text-neutral-400">ms</span>
           </div>
-          <span className="text-xs text-primary font-bold block">-79% de demora</span>
-        </div>
+          <span className="text-xs sm:text-sm font-bold text-primary mt-1.5 block">
+            -79% de demora
+          </span>
+        </button>
 
         {/* Download */}
-        <div 
+        <button
+          type="button"
           onClick={() => setActiveMetric("download")}
-          className={`border-l-2 pl-3 space-y-1 cursor-pointer transition-colors ${
-            activeMetric === "download" ? "border-primary" : "border-neutral-800 hover:border-neutral-600"
+          className={`flex flex-col items-center justify-center text-center p-5 border-2 transition-all cursor-pointer ${
+            activeMetric === "download"
+              ? "border-primary bg-primary/10 shadow-sm"
+              : "border-neutral-800 bg-neutral-900 hover:border-neutral-600"
           }`}
         >
-          <span className="text-neutral-500 uppercase text-xs block font-medium">DESCARGA:</span>
-          <div className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+          <span className="text-xs sm:text-sm font-bold uppercase tracking-wider text-neutral-400">
+            DESCARGA
+          </span>
+          <div className="text-2xl sm:text-3xl lg:text-4xl font-black text-white mt-1.5 tracking-tight">
             94.8 <span className="text-sm font-bold text-neutral-400">Mbps</span>
           </div>
-          <span className="text-xs text-primary font-bold block">+287% de velocidad</span>
-        </div>
+          <span className="text-xs sm:text-sm font-bold text-primary mt-1.5 block">
+            +287% de velocidad
+          </span>
+        </button>
 
         {/* Jitter */}
-        <div 
+        <button
+          type="button"
           onClick={() => setActiveMetric("jitter")}
-          className={`border-l-2 pl-3 space-y-1 cursor-pointer transition-colors ${
-            activeMetric === "jitter" ? "border-primary" : "border-neutral-800 hover:border-neutral-600"
+          className={`flex flex-col items-center justify-center text-center p-5 border-2 transition-all cursor-pointer ${
+            activeMetric === "jitter"
+              ? "border-primary bg-primary/10 shadow-sm"
+              : "border-neutral-800 bg-neutral-900 hover:border-neutral-600"
           }`}
         >
-          <span className="text-neutral-500 uppercase text-xs block font-medium">ESTABILIDAD (JITTER):</span>
-          <div className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+          <span className="text-xs sm:text-sm font-bold uppercase tracking-wider text-neutral-400">
+            ESTABILIDAD (JITTER)
+          </span>
+          <div className="text-2xl sm:text-3xl lg:text-4xl font-black text-white mt-1.5 tracking-tight">
             2 <span className="text-sm font-bold text-neutral-400">ms</span>
           </div>
-          <span className="text-xs text-primary font-bold block">-91% de variación</span>
-        </div>
+          <span className="text-xs sm:text-sm font-bold text-primary mt-1.5 block">
+            -91% de variación
+          </span>
+        </button>
 
         {/* Packet Loss */}
-        <div className="border-l-2 border-neutral-800 pl-3 space-y-1">
-          <span className="text-neutral-500 uppercase text-xs block font-medium">PÉRDIDA DE DATOS:</span>
-          <div className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+        <div className="flex flex-col items-center justify-center text-center p-5 border-2 border-neutral-800 bg-neutral-900">
+          <span className="text-xs sm:text-sm font-bold uppercase tracking-wider text-neutral-400">
+            PÉRDIDA DE DATOS
+          </span>
+          <div className="text-2xl sm:text-3xl lg:text-4xl font-black text-white mt-1.5 tracking-tight">
             0.0 <span className="text-sm font-bold text-neutral-400">%</span>
           </div>
-          <span className="text-xs text-emerald-400 font-bold block">0% pérdida • LIMPIO</span>
+          <span className="text-xs sm:text-sm font-bold text-emerald-400 mt-1.5 block">
+            0% pérdida • LIMPIO
+          </span>
         </div>
       </div>
 
-      {/* SVG Interactive Chart Box */}
-      <div className="border-2 border-neutral-800 bg-black p-4 relative space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-neutral-800">
-          <span className="text-xs font-mono text-neutral-300 font-bold uppercase">
-            CURVA TEMPORAL: {current.label} ({current.unit})
-          </span>
+      {/* SVG Interactive Chart Box (Enlarged graph & larger title) */}
+      <div className="border-2 border-neutral-800 bg-black p-4 sm:p-5 relative space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-neutral-800">
+          {/* Bigger Title for Curve */}
+          <div className="flex items-center gap-2">
+            <Activity className="h-4 w-4 text-primary shrink-0" />
+            <span className="text-base sm:text-lg font-bold font-mono text-white tracking-tight uppercase">
+              CURVA DE {current.label} ({current.unit})
+            </span>
+          </div>
 
           <div className="flex items-center gap-4 text-xs font-mono">
             <div className="flex items-center gap-1.5">
@@ -173,10 +205,11 @@ export function NetworkComparisonChart() {
           </div>
         </div>
 
-        <div className="w-full overflow-x-auto">
+        {/* Larger Taller SVG Chart */}
+        <div className="w-full overflow-x-auto py-1">
           <svg
             viewBox={`0 0 ${width} ${height}`}
-            className="w-full h-44 sm:h-52 select-none"
+            className="w-full h-64 sm:h-72 lg:h-80 select-none"
           >
             {/* Grid lines */}
             {[0, 0.25, 0.5, 0.75, 1].map((ratio, idx) => {
@@ -197,7 +230,7 @@ export function NetworkComparisonChart() {
                     x={paddingX - 8}
                     y={y + 3}
                     fill="#737373"
-                    fontSize="10"
+                    fontSize="11"
                     fontFamily="monospace"
                     textAnchor="end"
                   >
@@ -214,7 +247,7 @@ export function NetworkComparisonChart() {
                 x={pt.x}
                 y={height - 10}
                 fill="#737373"
-                fontSize="10"
+                fontSize="11"
                 fontFamily="monospace"
                 textAnchor="middle"
               >
@@ -222,7 +255,7 @@ export function NetworkComparisonChart() {
               </text>
             ))}
 
-            {/* Before Path */}
+            {/* Before Path (Red dashed) */}
             <path
               d={beforeSvgPath}
               fill="none"
@@ -231,15 +264,15 @@ export function NetworkComparisonChart() {
               strokeDasharray="4 3"
             />
 
-            {/* After Path */}
+            {/* After Path (Purple solid) */}
             <path
               d={afterSvgPath}
               fill="none"
-              stroke="#FF7F11"
-              strokeWidth="3"
+              stroke="#8B5CF6"
+              strokeWidth="3.5"
             />
 
-            {/* Dots */}
+            {/* Before Dots (Red) */}
             {beforeCoords.map((pt, idx) => (
               <circle
                 key={`b-${idx}`}
@@ -250,13 +283,14 @@ export function NetworkComparisonChart() {
               />
             ))}
 
+            {/* After Dots (Purple) */}
             {afterCoords.map((pt, idx) => (
               <circle
                 key={`a-${idx}`}
                 cx={pt.x}
                 cy={pt.y}
                 r={hoverIndex === idx ? 6 : 4}
-                fill="#FF7F11"
+                fill="#8B5CF6"
                 stroke="#000000"
                 strokeWidth="1.5"
                 onMouseEnter={() => setHoverIndex(idx)}
@@ -267,20 +301,19 @@ export function NetworkComparisonChart() {
           </svg>
         </div>
 
-        {/* Minimal Explanation without bulky background */}
+        {/* Minimal Explanation without bulky background (Removed Prueba #2) */}
         <div className="border-l-2 border-primary pl-3 py-1 flex items-center justify-between text-xs font-sans">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
             <span className="text-neutral-300">
               <strong className="text-white">Diagnóstico: </strong>
-              La línea naranja es continua y sin caídas porque se eliminó la congestión de canales en el aire.
+              {current.description}
             </span>
           </div>
-          <span className="text-xs font-mono text-neutral-500 shrink-0">
-            TEST #{testCount}
-          </span>
         </div>
       </div>
     </div>
   );
 }
+
+export default ConnectionQuality;

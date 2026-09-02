@@ -1,14 +1,16 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { 
   AlertCircle, 
   RotateCw,
   Layers,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Copy,
+  Check
 } from "lucide-react";
-import { NetworkComparisonChart } from "@/components/NetworkComparisonChart";
-import { GrandpaGuideSection } from "@/components/GrandpaGuideSection";
-import { BrutalistClientsManager } from "@/components/BrutalistClientsManager";
+import { ConnectionQuality } from "@/components/ConnectionQuality";
+import { HelpGuide } from "@/components/HelpGuide";
+import { DeviceManager } from "@/components/DeviceManager";
 import { CapabilitiesGrid } from "@/components/CapabilitiesGrid";
 import { 
   mockDevice, 
@@ -25,8 +27,16 @@ export function Dashboard({ isLive, onWanStatusChange }) {
   const [liveError, setLiveError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [showAdvancedTelemetry, setShowAdvancedTelemetry] = useState(false);
+  const [copiedIp, setCopiedIp] = useState(false);
 
-  const refreshData = async () => {
+  const handleCopyIp = () => {
+    const ip = deviceData.managementAddress || "192.168.1.1";
+    navigator.clipboard.writeText(ip);
+    setCopiedIp(true);
+    setTimeout(() => setCopiedIp(false), 2000);
+  };
+
+  const refreshData = useCallback(async () => {
     if (!isLive) {
       setDeviceData(mockDevice);
       setStatusData(mockStatus);
@@ -68,17 +78,14 @@ export function Dashboard({ isLive, onWanStatusChange }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isLive, onWanStatusChange]);
 
   useEffect(() => {
     refreshData();
-  }, [isLive]);
+  }, [refreshData]);
 
-  const trackerItems = Object.entries(capsData.capabilities || {}).map(([name, status]) => ({
-    name,
-    status
-  }));
-  const verifiedCount = trackerItems.filter((i) => i.status === "verified").length;
+  const isWanConnected = statusData.wanStatus === "connected" || statusData.reachable === "true";
+  const clientCount = clientsData.clients?.length || 0;
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-8 py-5 space-y-6 bg-black text-white font-sans">
@@ -96,14 +103,22 @@ export function Dashboard({ isLive, onWanStatusChange }) {
       )}
 
       {/* ========================================================================= */}
-      {/* 1. SECCIÓN PRIMORDIAL: DATOS DEL ROUTER, IP Y FIRMWARE (COMPACTO DARK) */}
+      {/* 1. SECCIÓN PRIMORDIAL: DATOS DEL ROUTER, IP Y FIRMWARE (BRUTALISTA ELEVADO) */}
       {/* ========================================================================= */}
-      <section className="w-full border-2 border-neutral-800 bg-neutral-950 p-4 sm:p-5 shadow-sm space-y-3 text-white">
+      <section className="w-full border-2 border-neutral-800 bg-neutral-950 p-4 sm:p-5 shadow-sm space-y-4 text-white">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b-2 border-neutral-800 pb-5 pt-1">
-          <div>
-            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black uppercase tracking-tight text-white font-sans">
-              {deviceData.vendor} <span className="text-primary">{deviceData.model}</span>
-            </h1>
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center gap-3">
+              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black uppercase tracking-tight text-white font-sans">
+                {deviceData.vendor} <span className="text-primary">{deviceData.model}</span>
+              </h1>
+              <div className="flex items-center gap-1.5 px-2.5 py-0.5 border border-neutral-800 bg-neutral-900 font-mono text-xs">
+                <span className={`h-2 w-2 rounded-full ${isWanConnected ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`} />
+                <span className={`font-bold uppercase ${isWanConnected ? "text-emerald-400" : "text-rose-400"}`}>
+                  {isWanConnected ? "INTERNET CONECTADO" : "SIN CONEXIÓN"}
+                </span>
+              </div>
+            </div>
           </div>
 
           <button
@@ -116,55 +131,84 @@ export function Dashboard({ isLive, onWanStatusChange }) {
           </button>
         </div>
 
-        {/* Minimal Horizontal Telemetry */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 pt-3 pb-1 font-mono text-xs">
-          <div className="border-l-2 border-neutral-800 pl-3 space-y-1">
+        {/* Minimal Horizontal Telemetry Ribbon (Brutalist style with border-l-2) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 pt-1 font-mono text-xs">
+          {/* IP con 1-click copy */}
+          <div className="border-l-2 border-primary pl-3 space-y-1 bg-black/40 py-1.5 pr-2">
             <span className="text-neutral-500 uppercase text-xs block font-medium">IP DE GESTIÓN:</span>
-            <span className="font-bold text-white text-sm block">{deviceData.managementAddress}</span>
+            <button
+              onClick={handleCopyIp}
+              className="flex items-center gap-1.5 font-bold text-white hover:text-primary text-sm transition-colors cursor-pointer text-left w-full group"
+              title="Clic para copiar dirección IP"
+            >
+              <span>{deviceData.managementAddress || "192.168.1.1"}</span>
+              {copiedIp ? (
+                <Check className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+              ) : (
+                <Copy className="h-3.5 w-3.5 text-neutral-500 group-hover:text-primary shrink-0" />
+              )}
+              <span className="text-[10px] text-neutral-500 group-hover:text-primary">
+                {copiedIp ? "¡COPIADA!" : "[COPIAR]"}
+              </span>
+            </button>
           </div>
 
-          <div className="border-l-2 border-neutral-800 pl-3 space-y-1">
-            <span className="text-neutral-500 uppercase text-xs block font-medium">FIRMWARE:</span>
-            <span className="font-bold text-white text-sm truncate block" title={deviceData.firmwareVersion?.value}>
-              {deviceData.firmwareVersion?.value || "3.15.9 Build 140724"}
+          {/* Dispositivos Activos */}
+          <div className="border-l-2 border-neutral-800 pl-3 space-y-1 bg-black/40 py-1.5 pr-2">
+            <span className="text-neutral-500 uppercase text-xs block font-medium">DISPOSITIVOS:</span>
+            <span className="font-bold text-white text-sm block">
+              {clientCount} CONECTADOS
             </span>
           </div>
 
-          <div className="border-l-2 border-neutral-800 pl-3 space-y-1">
-            <span className="text-neutral-500 uppercase text-xs block font-medium">TIEMPO ENCENDIDO:</span>
-            <span className="font-bold text-white text-sm block">{statusData.uptime || "5h 33m 20s"}</span>
+          {/* Seguridad de Red */}
+          <div className="border-l-2 border-neutral-800 pl-3 space-y-1 bg-black/40 py-1.5 pr-2">
+            <span className="text-neutral-500 uppercase text-xs block font-medium">SEGURIDAD:</span>
+            <span className="font-bold text-emerald-400 text-sm block">
+              PROTEGIDA (WPA2)
+            </span>
           </div>
 
-          <div className="border-l-2 border-neutral-800 pl-3 space-y-1">
-            <span className="text-neutral-500 uppercase text-xs block font-medium">ESTADO WAN:</span>
-            <div className="flex items-center gap-1.5 pt-0.5">
-              <span className={`h-2 w-2 rounded-full ${statusData.wanStatus === "connected" ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`} />
-              <span className={`font-bold text-sm uppercase ${statusData.wanStatus === "connected" ? "text-emerald-400" : "text-rose-400"}`}>
-                {statusData.wanStatus || "CONNECTED"}
-              </span>
-            </div>
+          {/* Tiempo Encendido */}
+          <div className="border-l-2 border-neutral-800 pl-3 space-y-1 bg-black/40 py-1.5 pr-2">
+            <span className="text-neutral-500 uppercase text-xs block font-medium">TIEMPO ACTIVO:</span>
+            <span className="font-bold text-white text-sm block truncate">
+              {statusData.uptime || "5h 33m 20s"}
+            </span>
+          </div>
+
+          {/* Versión Firmware */}
+          <div className="border-l-2 border-neutral-800 pl-3 space-y-1 bg-black/40 py-1.5 pr-2 col-span-1 sm:col-span-2 lg:col-span-1">
+            <span className="text-neutral-500 uppercase text-xs block font-medium">FIRMWARE:</span>
+            <span className="font-bold text-white text-sm block truncate" title={deviceData.firmwareVersion?.value}>
+              {deviceData.firmwareVersion?.value || "3.15.9 Build 140724"}
+            </span>
           </div>
         </div>
       </section>
 
-      {/* ========================================================================= */}
-      {/* 2. GRÁFICO DE RED DE UN ANTES Y DESPUÉS */}
-      {/* ========================================================================= */}
+      {/* 2. CALIDAD DE CONEXIÓN */}
       <section>
-        <NetworkComparisonChart />
+        <ConnectionQuality />
       </section>
 
-      {/* Dispositivos conectados con opción de ponerles alias */}
+      {/* 3. DISPOSITIVOS CONECTADOS */}
       <section>
-        <BrutalistClientsManager 
+        <DeviceManager 
           clients={clientsData.clients} 
           state={clientsData.state}
         />
       </section>
 
-      {/* ========================================================================= */}
-      {/* 6. MATRIZ DE CAPACIDADES Y AUDITORÍA TÉCNICA (MINIMALISTA Y COLAPSABLE) */}
-      {/* ========================================================================= */}
+      {/* 4. GUÍA CLARA Y SIMPLE */}
+      <section>
+        <HelpGuide
+          clientCount={clientCount}
+          isWanConnected={isWanConnected}
+        />
+      </section>
+
+      {/* 5. FUNCIONES DEL ROUTER (Colapsable) */}
       <section className="border-2 border-neutral-800 bg-neutral-950 p-4 sm:p-5 shadow-sm text-white">
         <div 
           onClick={() => setShowAdvancedTelemetry(!showAdvancedTelemetry)}
@@ -172,52 +216,25 @@ export function Dashboard({ isLive, onWanStatusChange }) {
         >
           <div className="flex items-center gap-2.5">
             <Layers className="h-4 w-4 text-primary" />
-            <div>
-              <h4 className="text-xs sm:text-sm font-bold font-mono uppercase text-white group-hover:text-primary transition-colors">
-                MATRIZ TÉCNICA DE CAPACIDADES
-              </h4>
-              <p className="text-xs text-neutral-300 font-sans">
-                Es la lista de funciones que router-core puede leer del router, como el estado, los aparatos y la seguridad.
-              </p>
-              <p className="text-xs text-neutral-500 font-sans">
-                {verifiedCount} de {trackerItems.length} superficies observadas en hardware real TL-WR841N
-              </p>
-            </div>
+            <h4 className="text-sm sm:text-base font-bold font-mono uppercase text-white group-hover:text-primary transition-colors">
+              Funciones del Router
+            </h4>
           </div>
 
-          <div className="flex items-center gap-2 font-mono text-xs">
-            <span className="text-neutral-300 bg-neutral-900 border border-neutral-700 px-2 py-0.5 font-semibold">
-              {showAdvancedTelemetry ? "Ocultar" : "Expandir"}
-            </span>
+          <div className="p-1 border border-neutral-800 bg-neutral-900 group-hover:border-neutral-700 transition-colors">
             {showAdvancedTelemetry ? (
               <ChevronUp className="h-4 w-4 text-white" />
             ) : (
-              <ChevronDown className="h-4 w-4 text-neutral-500" />
+              <ChevronDown className="h-4 w-4 text-neutral-400" />
             )}
           </div>
         </div>
 
         {showAdvancedTelemetry && (
-          <div className="mt-4 pt-4 border-t-2 border-neutral-800 space-y-4">
+          <div className="mt-4 pt-4 border-t-2 border-neutral-800">
             <CapabilitiesGrid capabilities={capsData.capabilities} />
-
-            <div className="border border-neutral-800 bg-black p-3 font-mono text-xs text-neutral-400 space-y-1">
-              <div className="text-white font-bold">
-                INVARIANTE DE SEGURIDAD (ADR-0001):
-              </div>
-              <p>
-                router-core nunca ejecuta mutaciones sobre el router. Todas las operaciones son peticiones GET seguras hacia 127.0.0.1 o RFC1918.
-              </p>
-            </div>
           </div>
         )}
-      </section>
-
-      <section>
-        <GrandpaGuideSection
-          clientCount={clientsData.clients?.length || 3}
-          isWanConnected={statusData.wanStatus === "connected" || statusData.reachable === "true"}
-        />
       </section>
     </div>
   );

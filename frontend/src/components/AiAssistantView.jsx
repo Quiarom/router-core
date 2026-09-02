@@ -3,50 +3,31 @@ import {
   AlertCircle,
   CornerDownLeft,
   RotateCw,
-  Sparkles,
-  Trash2
+  Trash2,
+  ChevronDown,
+  ChevronUp,
+  Bot
 } from "lucide-react";
 
 const AGENT_API_URL =
   import.meta.env.VITE_AGENT_API_URL || "http://127.0.0.1:8585/v0/chat";
-const AGENT_HEALTH_URL = AGENT_API_URL.replace(/\/v0\/chat$/, "/healthz");
-
-const suggestedQuestions = [
-  "¿Está expuesta mi red al exterior?",
-  "¿Qué aparatos están conectados ahora?",
-  "¿Tengo DMZ o reenvío de puertos activados?",
-  "¿Qué información falta para evaluar la seguridad del Wi-Fi?"
-];
 
 export function AiAssistantView() {
   const [query, setQuery] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isCheckingConnection, setIsCheckingConnection] = useState(false);
-  const [connectionState, setConnectionState] = useState("unknown");
   const [errorMessage, setErrorMessage] = useState("");
   const [conversations, setConversations] = useState([]);
+  const [expandedObservations, setExpandedObservations] = useState({});
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "auto" });
   }, []);
 
-  const checkConnection = async () => {
-    setIsCheckingConnection(true);
-    setErrorMessage("");
-    try {
-      const response = await fetch(AGENT_HEALTH_URL);
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      setConnectionState("connected");
-    } catch {
-      setConnectionState("disconnected");
-      setErrorMessage(
-        "No se pudo conectar con router-core-agent en 127.0.0.1:8585."
-      );
-    } finally {
-      setIsCheckingConnection(false);
-    }
+  const toggleObservation = (id) => {
+    setExpandedObservations((prev) => ({
+      ...prev,
+      [id]: !prev[id]
+    }));
   };
 
   const handleExecute = async (customPrompt) => {
@@ -83,30 +64,30 @@ export function AiAssistantView() {
         throw new Error(payload.error || `El agente respondió HTTP ${response.status}`);
       }
 
-      setConnectionState("connected");
       setConversations((current) =>
         current.map((conversation) =>
           conversation.id === pendingId
             ? {
                 ...conversation,
                 isPending: false,
-                answer: payload.answer,
-                steps: payload.steps || [],
-                model: payload.model,
-                mode: payload.mode
+                answer:
+                  payload.answer ||
+                  "No se recibió respuesta explicativa del agente.",
+                model: payload.model || "MiniMax M3",
+                mode: payload.mode || "live",
+                steps: payload.steps || []
               }
             : conversation
         )
       );
     } catch (error) {
-      setConnectionState("disconnected");
-      setConversations((current) =>
-        current.filter((conversation) => conversation.id !== pendingId)
-      );
       setErrorMessage(
         error instanceof Error
           ? error.message
-          : "No se pudo completar la consulta con MiniMax."
+          : "Error desconocido al consultar el agente."
+      );
+      setConversations((current) =>
+        current.filter((conversation) => conversation.id !== pendingId)
       );
     } finally {
       setIsProcessing(false);
@@ -114,43 +95,17 @@ export function AiAssistantView() {
   };
 
   return (
-    <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6 bg-black text-white font-sans">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b-2 border-neutral-800 pb-5 pt-1">
-        <div>
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-5 w-5 text-primary" />
-            <h1 className="text-2xl sm:text-3xl font-black uppercase tracking-tight">
-              Asistente de red
-            </h1>
-          </div>
-          <p className="mt-1 text-sm text-neutral-400">
-            MiniMax M3 razona sobre observaciones de solo lectura de router-core.
-          </p>
-        </div>
-
-        <button
-          onClick={checkConnection}
-          disabled={isCheckingConnection}
-          className="px-4 py-2 bg-neutral-900 hover:bg-neutral-800 border-2 border-neutral-700 text-xs font-mono font-bold uppercase text-white flex items-center gap-2 disabled:opacity-50 cursor-pointer"
-        >
-          <span
-            className={`h-2.5 w-2.5 rounded-full ${
-              connectionState === "connected"
-                ? "bg-emerald-400"
-                : connectionState === "disconnected"
-                  ? "bg-rose-500"
-                  : "bg-neutral-500"
-            }`}
-          />
-          <RotateCw
-            className={`h-3.5 w-3.5 ${isCheckingConnection ? "animate-spin" : ""}`}
-          />
-          Comprobar agente
-        </button>
+    <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6 text-white font-sans">
+      {/* Header section: Brutalist & Tech-forward */}
+      <div className="flex items-center justify-between gap-4 border-b-2 border-neutral-800 pb-4">
+        <h1 className="text-xl sm:text-2xl font-black uppercase tracking-tight font-mono text-white flex items-center gap-2">
+          <span className="text-primary font-mono font-black">&gt;&gt;</span> ASISTENTE DE RED (MINIMAX M3)
+        </h1>
       </div>
 
+      {/* Input Box: Brutalist */}
       <div className="space-y-3">
-        <div className="flex flex-col sm:flex-row gap-2 items-stretch">
+        <div className="border-2 border-neutral-800 bg-neutral-950 p-2 flex flex-col sm:flex-row gap-2 items-center focus-within:border-primary transition-colors">
           <input
             type="text"
             value={query}
@@ -158,125 +113,139 @@ export function AiAssistantView() {
             onKeyDown={(event) => {
               if (event.key === "Enter") handleExecute();
             }}
-            placeholder="Pregunta algo sobre tu router..."
+            placeholder="Escribe tu consulta sobre el router o los dispositivos..."
             autoFocus
-            className="w-full h-14 bg-black border-2 border-neutral-800 focus:border-primary focus:outline-none px-5 text-base text-white placeholder-neutral-500"
+            className="w-full h-11 bg-transparent px-3 text-sm text-white placeholder-neutral-500 font-sans focus:outline-none"
           />
           <button
             onClick={() => handleExecute()}
             disabled={isProcessing || !query.trim()}
-            className="h-14 px-6 bg-primary hover:bg-primary-hover text-white font-bold uppercase tracking-wider text-xs font-mono disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
+            className="w-full sm:w-auto h-10 px-5 bg-primary hover:bg-primary-hover text-white font-mono font-bold uppercase text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0 cursor-pointer"
           >
             {isProcessing ? (
               <>
-                <span className="animate-spin">⟳</span>
-                Analizando...
+                <RotateCw className="h-3.5 w-3.5 animate-spin" />
+                <span>Analizando...</span>
               </>
             ) : (
               <>
-                <CornerDownLeft className="h-4 w-4" />
-                Consultar
+                <CornerDownLeft className="h-3.5 w-3.5" />
+                <span>Preguntar</span>
               </>
             )}
           </button>
         </div>
-
-        <div className="flex flex-wrap gap-2">
-          {suggestedQuestions.map((question) => (
-            <button
-              key={question}
-              onClick={() => handleExecute(question)}
-              disabled={isProcessing}
-              className="border border-neutral-800 bg-neutral-950 px-3 py-1.5 text-xs text-neutral-400 hover:border-primary hover:text-white disabled:opacity-40 cursor-pointer"
-            >
-              {question}
-            </button>
-          ))}
-        </div>
       </div>
 
+      {/* Error alert: Brutalist red banner */}
       {errorMessage && (
-        <div className="border-2 border-rose-900 bg-rose-950/30 p-4 text-sm text-rose-200 space-y-2">
-          <div className="flex items-start gap-2">
-            <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+        <div className="border-2 border-rose-600 bg-neutral-950 p-3.5 text-xs text-rose-300 space-y-1.5 font-mono">
+          <div className="flex items-center gap-2 font-bold uppercase">
+            <AlertCircle className="h-4 w-4 text-rose-400 shrink-0" />
             <span>{errorMessage}</span>
           </div>
-          <code className="block text-xs text-neutral-300 font-mono">
-            OPENROUTER_API_KEY=&lt;TU_CLAVE&gt; ./bin/router-core-agent --serve 127.0.0.1:8585
-          </code>
+          <p className="text-neutral-400 text-xs pl-6">
+            Para iniciar el servicio con MiniMax: <code className="text-white bg-neutral-900 px-1.5 py-0.5 border border-neutral-800">./bin/router-core-agent --serve 127.0.0.1:8585</code>
+          </p>
         </div>
       )}
 
-      <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
-        <span className="text-xs font-mono uppercase text-neutral-500">
-          {conversations.length === 0
-            ? "Escribe una pregunta para comenzar"
-            : `${conversations.length} consultas`}
-        </span>
-        {conversations.length > 0 && (
+      {/* Conversation history header (only shown when conversations exist) */}
+      {conversations.length > 0 && (
+        <div className="flex items-center justify-between pt-2 text-xs font-mono text-neutral-400">
+          <span>
+            {`${conversations.length} ${conversations.length === 1 ? "CONSULTA" : "CONSULTAS"}`}
+          </span>
           <button
             onClick={() => setConversations([])}
-            className="text-neutral-500 hover:text-rose-400 flex items-center gap-1.5 text-xs font-mono uppercase cursor-pointer"
+            className="hover:text-rose-400 flex items-center gap-1 transition-colors cursor-pointer"
           >
-            <Trash2 className="h-3.5 w-3.5" />
-            Limpiar
+            <Trash2 className="h-3 w-3" />
+            <span>LIMPIAR HISTORIAL</span>
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
-      <div className="space-y-8">
+      {/* Chat Messages */}
+      <div className="space-y-6">
         {conversations.map((conversation) => (
-          <article key={conversation.id} className="space-y-4 border-b border-neutral-900 pb-8">
+          <article key={conversation.id} className="space-y-3 font-sans">
+            {/* User message */}
             <div className="flex justify-end">
-              <div className="max-w-2xl border border-neutral-800 bg-neutral-900 px-4 py-2.5">
-                <p className="text-sm sm:text-base text-white">{conversation.question}</p>
-                <span className="block mt-1 text-right text-xs text-neutral-500 font-mono">
+              <div className="max-w-xl border-2 border-neutral-700 bg-neutral-900 px-4 py-2.5 text-sm text-white shadow-sm">
+                <p>{conversation.question}</p>
+                <span className="block mt-1 text-right text-[11px] text-neutral-400 font-mono">
                   {conversation.timestamp}
                 </span>
               </div>
             </div>
 
+            {/* Assistant response */}
             {conversation.isPending ? (
-              <div className="flex items-center gap-2 text-primary font-mono text-xs font-bold uppercase">
-                <span className="animate-spin">⟳</span>
-                Consultando observaciones y esperando a MiniMax M3...
+              <div className="flex items-center gap-2.5 text-primary text-xs font-mono font-bold py-2 px-1">
+                <RotateCw className="h-3.5 w-3.5 animate-spin" />
+                <span>CONSULTANDO ROUTER Y RAZONANDO CON MINIMAX...</span>
               </div>
             ) : (
-              <div className="max-w-4xl space-y-4">
-                <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
-                  <span className="border border-neutral-800 bg-neutral-950 px-2 py-1 text-neutral-300">
-                    {conversation.model}
-                  </span>
-                  <span
-                    className={`border px-2 py-1 ${
-                      conversation.mode === "live"
-                        ? "border-emerald-900 text-emerald-400"
-                        : "border-amber-900 text-amber-400"
-                    }`}
-                  >
-                    {conversation.mode === "live" ? "MINIMAX EN VIVO" : "MODO DEMOSTRACIÓN"}
-                  </span>
-                </div>
-
-                <div className="border border-neutral-800 bg-neutral-950 p-3 space-y-2 overflow-x-auto">
-                  <div className="text-xs font-mono uppercase text-neutral-500">
-                    Observaciones consultadas
-                  </div>
-                  {conversation.steps.map((step, index) => (
-                    <div key={`${step.path}-${index}`} className="font-mono text-xs">
-                      <div className="text-primary">
-                        &gt;&gt; [GET {step.http_status}] {step.path}
-                      </div>
-                      <pre className="mt-1 whitespace-pre-wrap break-all text-neutral-500">
-                        {JSON.stringify(step.result)}
-                      </pre>
+              <div className="border-2 border-neutral-800 bg-neutral-950 p-5 space-y-4 shadow-sm">
+                {/* Meta header */}
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-800 pb-3">
+                  <div className="flex items-center gap-2 font-mono">
+                    <div className="h-5 w-5 bg-primary/20 border border-primary flex items-center justify-center text-primary">
+                      <Bot className="h-3 w-3" />
                     </div>
-                  ))}
+                    <span className="text-xs font-bold text-white uppercase">
+                      {conversation.model || "MiniMax M3"}
+                    </span>
+                    <span
+                      className={`text-[10px] px-2 py-0.5 border font-bold uppercase ${
+                        conversation.mode === "live"
+                          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                          : "bg-amber-500/10 text-amber-400 border-amber-500/30"
+                      }`}
+                    >
+                      {conversation.mode === "live" ? "EN VIVO" : "DEMOSTRACIÓN"}
+                    </span>
+                  </div>
                 </div>
 
-                <p className="whitespace-pre-wrap text-sm sm:text-base text-neutral-200 leading-relaxed">
+                {/* Main answer text */}
+                <div className="text-sm text-neutral-200 leading-relaxed whitespace-pre-wrap font-sans">
                   {conversation.answer}
-                </p>
+                </div>
+
+                {/* Collapsible technical observations */}
+                {conversation.steps && conversation.steps.length > 0 && (
+                  <div className="border-t border-neutral-800 pt-3">
+                    <button
+                      onClick={() => toggleObservation(conversation.id)}
+                      className="flex items-center gap-1.5 text-xs font-mono font-bold text-neutral-400 hover:text-white uppercase transition-colors cursor-pointer"
+                    >
+                      <span>DATOS TÉCNICOS OBSERVADOS ({conversation.steps.length})</span>
+                      {expandedObservations[conversation.id] ? (
+                        <ChevronUp className="h-3.5 w-3.5 text-primary" />
+                      ) : (
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+
+                    {expandedObservations[conversation.id] && (
+                      <div className="mt-2.5 border border-neutral-800 bg-black p-3 space-y-2 text-xs font-mono">
+                        {conversation.steps.map((step, index) => (
+                          <div key={`${step.path}-${index}`} className="space-y-1">
+                            <div className="text-primary flex items-center gap-1.5 font-bold">
+                              <span className="text-neutral-400">GET {step.http_status}</span>
+                              <span>{step.path}</span>
+                            </div>
+                            <pre className="text-neutral-400 text-[11px] whitespace-pre-wrap break-all overflow-x-auto">
+                              {JSON.stringify(step.result, null, 2)}
+                            </pre>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </article>
