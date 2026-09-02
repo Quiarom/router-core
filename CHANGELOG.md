@@ -35,6 +35,47 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 - `.github/ISSUE_TEMPLATE/` (bug report, feature request) and
   `.github/PULL_REQUEST_TEMPLATE.md`.
 - `humanizer` skill bundled at `.claude/skills/humanizer/`.
+- `cmd/router-core-agent --serve 127.0.0.1:8585`: HTTP server
+  mode for the agent, exposing `POST /v0/chat` and
+  `GET /healthz` with loopback-only CORS so the frontend can
+  drive the agent over the local HTTP surface.
+- `cmd/router-core/serve`: `/v0/clients` route wired (the
+  handler existed on main but the route registration was
+  missing — a real bug; the frontend dev caught and fixed it).
+- React 19 + Vite 8 + Tailwind 4 dashboard under `frontend/`,
+  contributed by the third-party frontend dev. Hits every
+  documented endpoint of the contract and respects the four
+  capability states.
+
+### In progress on `develop`
+
+The next items land on the `develop` branch and merge to
+`main` as a single release once the full MiniMax integration
+is verified. The CHANGELOG will be split at that point.
+
+- **Session-token production path.** The v8.4 firmware requires
+  `/<token>/userRpm/<path>` for several endpoints; the `/`
+  response does not return the token on this build. Production
+  path: `GET /userRpm/LoginRpm.htm?Save=Save` with Basic
+  Auth, extract the structural redirect shape
+  `/<TOKEN>/userRpm/Index.htm`, prefix subsequent calls.
+- **Wireless-security parser.** The endpoint is reachable
+  (verified 2026-08-31) but the runtime returns 503 with
+  reason "parser is pending". Wire the parser against a
+  sanitized capture from the live lab unit.
+- **`inspect` end-to-end.** Make sure the per-capability
+  independent dispatch surfaces in the inspect output too.
+- **Agent tests.** `cmd/router-core-agent/` has 0 test files.
+  Add tests for the tool loop (deterministic stub mode) and
+  the new HTTP server (`/v0/chat`, `/healthz`, CORS).
+- **Live OpenRouter run.** Requires the operator's
+  `OPENROUTER_API_KEY`. Document the trace.
+- **Frontend end-to-end test.** Prove the round trip:
+  frontend → `/v0/chat` → agent → `/v0/security/*` → frontend.
+  The frontend dev's work is on `main`; the test belongs on
+  `develop` or as a separate CI job.
+- **Frontend tests.** Vitest not configured. Add a minimal
+  smoke test for the contract integration.
 
 ### Changed
 
@@ -55,12 +96,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 - `Adapter.Identify` reads the authenticated `Status` dashboard
   to extract firmware and hardware fingerprints via regex
   (works across firmware builds 3.13.33 and 3.15.9).
-- `cmd/router-core/main.go` `probe` subcommand no longer
-  reports "missing capture" against a live router; it
-  authenticates first.
-- `internal/architecture_test.go`: scope excludes
-  `cmd/router-core-agent/` (the agent's POST is to OpenRouter,
-  not to the router).
+- `Security()` aggregates per-capability observations
+  independently. A failure in one capability does not poison
+  the others.
+- The `default` branch on GitHub is `develop` during the
+  MiniMax-Week window; `main` is the released state.
 
 ### Fixed
 
@@ -74,6 +114,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 - `Security()` short-circuited on the first failing capability.
   Refactored to `SecurityCapability(ctx, name)` so each
   capability is independent.
+- `/v0/clients` route registration was missing on main (the
+  handler existed but was never wired to the mux). Caught and
+  fixed by the frontend dev.
 
 ### Known limitations
 
