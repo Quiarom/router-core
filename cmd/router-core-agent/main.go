@@ -524,7 +524,7 @@ func runLive(ctx context.Context, opts options, routerClient *routerCoreClient, 
 			return agentResult{}, fmt.Errorf("leer respuesta de OpenRouter: %w", readErr)
 		}
 		if response.StatusCode/100 != 2 {
-			return agentResult{}, fmt.Errorf("OpenRouter respondió HTTP %d: %s", response.StatusCode, compactJSON(responseBody))
+			return agentResult{}, fmt.Errorf("el endpoint respondió HTTP %d: %s", response.StatusCode, compactJSON(responseBody))
 		}
 
 		var parsed chatResponse
