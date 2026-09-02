@@ -17,6 +17,7 @@ type Endpoint struct {
 const (
 	OpStatus           = "status"
 	OpDHCPClients      = "dhcp-clients"
+	OpWireless         = "wireless"
 	OpWPS              = "wps"
 	OpForwarding       = "forwarding"
 	OpDMZ              = "dmz"
@@ -35,6 +36,11 @@ var Endpoints = map[string]Endpoint{
 		Op: OpDHCPClients, Path: "/userRpm/AssignedIpAddrListRpm.htm", DashboardPage: "DHCP Clients",
 		Verified:    true,
 		CaptureNote: "verified 2026-08-31 against physical lab unit (3.13.33 Build 130506 Rel.48660n); auth via HTTP Basic header (plaintext password, NOT md5hex) per ADR 0005",
+	},
+	OpWireless: {
+		Op: OpWireless, Path: "/userRpm/WlanSecurityRpm.htm", DashboardPage: "Wireless Security",
+		Verified:    true,
+		CaptureNote: "verified 2026-08-31 against physical lab unit (3.15.9 Build 140724 Rel.63227n); auth via HTTP Basic header (plaintext password, NOT md5hex) + Referer to the parent frameset",
 	},
 	OpWPS: {
 		Op: OpWPS, Path: "/userRpm/WpsRpm.htm", DashboardPage: "WPS",
