@@ -25,14 +25,15 @@ const (
 )
 
 type options struct {
-	routerCoreURL    string
-	openrouterURL    string
-	openrouterModel  string
-	openrouterKeyEnv string
-	question         string
-	serveAddr        string
-	dryRun           bool
-	timeout          time.Duration
+	routerCoreURL           string
+	openrouterURL           string
+	openrouterModel         string
+	openrouterFallbackModel string
+	openrouterKeyEnv        string
+	question                string
+	serveAddr               string
+	dryRun                  bool
+	timeout                 time.Duration
 }
 
 type chatInput struct {
@@ -82,6 +83,11 @@ func parseFlags(args []string) (options, error) {
 		// with --model to use a different one (e.g. M2.7 for lower
 		// latency, or any other chat-completions-compatible model).
 		openrouterModel: envOrDefault("GMI_MODEL", "MiniMaxAI/MiniMax-M3"),
+		// Fallback model: M2.7. If M3 returns a transient error
+		// (5xx, timeout, connection reset), the agent retries
+		// once with this model. Override with GMI_FALLBACK_MODEL
+		// to a different chat-completions model.
+		openrouterFallbackModel: envOrDefault("GMI_FALLBACK_MODEL", "MiniMaxAI/MiniMax-M2.7"),
 		// Default key env var: GMI_SERVING_API_KEY. Falls back to
 		// OPENROUTER_API_KEY for backward compatibility with the
 		// OpenRouter path.
@@ -91,6 +97,7 @@ func parseFlags(args []string) (options, error) {
 	fs.StringVar(&opts.routerCoreURL, "router-core-url", opts.routerCoreURL, "URL local de router-core serve")
 	fs.StringVar(&opts.openrouterURL, "openrouter-url", opts.openrouterURL, "URL de Chat Completions (cualquier endpoint compatible con OpenAI)")
 	fs.StringVar(&opts.openrouterModel, "model", opts.openrouterModel, "identificador del modelo (e.g. MiniMaxAI/MiniMax-M3 o minimax/minimax-m3:free)")
+	fs.StringVar(&opts.openrouterFallbackModel, "model-fallback", opts.openrouterFallbackModel, "modelo de fallback si M3 falla (e.g. MiniMaxAI/MiniMax-M2.7)")
 	fs.StringVar(&opts.openrouterKeyEnv, "key-env", opts.openrouterKeyEnv, "variable de entorno que contiene la clave")
 	fs.StringVar(&opts.question, "question", "", "pregunta del usuario, o - para leer stdin")
 	fs.StringVar(&opts.serveAddr, "serve", "", "expone la API del chat en esta dirección loopback, por ejemplo 127.0.0.1:8585")
@@ -484,7 +491,46 @@ type chatResponse struct {
 	} `json:"error"`
 }
 
+// runLive calls the chat-completions endpoint, looping on tool
+// calls until the model emits a final answer. If the first model
+// returns a transient error (5xx, timeout, connection reset),
+// the function retries once with the fallback model. The final
+// answer reports which model actually answered.
 func runLive(ctx context.Context, opts options, routerClient *routerCoreClient, apiKey string, device, status, clients, capabilities json.RawMessage, question string, steps []observationStep) (agentResult, error) {
+	result, err := runLiveOnce(ctx, opts, routerClient, apiKey, device, status, clients, capabilities, question, steps, opts.openrouterModel)
+	if err == nil {
+		return result, nil
+	}
+	// Retry once with the fallback model if the primary error
+	// looks transient. Skip the retry for structural errors
+	// (bad URL, missing key, parse failure).
+	if !isTransient(err) {
+		return agentResult{}, err
+	}
+	if opts.openrouterFallbackModel == "" || opts.openrouterFallbackModel == opts.openrouterModel {
+		return agentResult{}, err
+	}
+	logf("modelo primario falló (%v): reintentando con %s", opts.openrouterModel, opts.openrouterFallbackModel)
+	result, err = runLiveOnce(ctx, opts, routerClient, apiKey, device, status, clients, capabilities, question, steps, opts.openrouterFallbackModel)
+	if err != nil {
+		return agentResult{}, fmt.Errorf("modelo primario y fallback fallaron: %w", err)
+	}
+	return result, nil
+}
+
+func isTransient(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "HTTP 5") ||
+		strings.Contains(s, "timeout") ||
+		strings.Contains(s, "connection reset") ||
+		strings.Contains(s, "connection refused") ||
+		strings.Contains(s, "EOF")
+}
+
+func runLiveOnce(ctx context.Context, opts options, routerClient *routerCoreClient, apiKey string, device, status, clients, capabilities json.RawMessage, question string, steps []observationStep, model string) (agentResult, error) {
 	history := []message{
 		{Role: "system", Content: buildSystemPrompt(device, status, clients, capabilities)},
 		{Role: "user", Content: question},
@@ -493,7 +539,7 @@ func runLive(ctx context.Context, opts options, routerClient *routerCoreClient, 
 
 	for range 8 {
 		requestBody, err := json.Marshal(chatRequest{
-			Model:    opts.openrouterModel,
+			Model:    model,
 			Messages: history,
 			Tools:    []openRouterTool{clientsTool, securityTool},
 		})
@@ -545,7 +591,7 @@ func runLive(ctx context.Context, opts options, routerClient *routerCoreClient, 
 			if answer == "" {
 				return agentResult{}, errors.New("MiniMax devolvió una respuesta vacía")
 			}
-			return agentResult{Answer: answer, Model: opts.openrouterModel, Mode: "live", Steps: steps}, nil
+			return agentResult{Answer: answer, Model: model, Mode: "live", Steps: steps}, nil
 		}
 
 		for _, call := range assistantMessage.ToolCalls {

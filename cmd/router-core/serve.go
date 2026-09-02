@@ -26,22 +26,25 @@ import (
 
 type sessionStore struct {
 	mu       sync.Mutex
-	password string
+	password []byte
 }
 
-func (s *sessionStore) get() (string, bool) {
+func (s *sessionStore) get() []byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.password, s.password != ""
+	return append([]byte(nil), s.password...)
 }
 
-func (s *sessionStore) set(p string) {
+func (s *sessionStore) set(p []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.password = p
+	for i := range s.password {
+		s.password[i] = 0
+	}
+	s.password = append([]byte(nil), p...)
 }
 
-func readPasswordNoEcho() (string, error) {
+func readPasswordNoEcho() ([]byte, error) {
 	type readResult struct {
 		buf []byte
 		err error
@@ -55,11 +58,11 @@ func readPasswordNoEcho() (string, error) {
 	select {
 	case res := <-ch:
 		if res.err != nil && res.err != io.EOF {
-			return "", res.err
+			return nil, res.err
 		}
-		return strings.TrimRight(string(res.buf), "\r\n"), nil
+		return []byte(strings.TrimRight(string(res.buf), "\r\n")), nil
 	case <-time.After(30 * time.Second):
-		return "", errors.New("timed out waiting 30s for password on stdin")
+		return nil, errors.New("timed out waiting 30s for password on stdin")
 	}
 }
 
@@ -87,17 +90,18 @@ func runServeCommand(args []string) error {
 	if err != nil {
 		return fmt.Errorf("read password: %w", err)
 	}
-	if password == "" {
+	if len(password) == 0 {
 		return errors.New("empty password")
 	}
-	defer zeroString(&password)
+	defer zeroBytes(&password)
 
-	store := &sessionStore{password: password}
+	store := &sessionStore{password: append([]byte(nil), password...)}
+	defer zeroBytes(&store.password)
 
 	adapter := tplinkwr841v8.New(*host, transport.WithTimeout(*timeout))
 	loginCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := adapter.Login(loginCtx, "admin", password); err != nil {
+	if err := adapter.Login(loginCtx, "admin", string(password)); err != nil {
 		return fmt.Errorf("login: %w", err)
 	}
 
@@ -156,14 +160,17 @@ func isRFC1918OrLoopback(addr string) bool {
 	return false
 }
 
-// zeroString zeroes a string in place. Go strings are immutable
-// but the backing bytes of a literal-converted []byte share
-// storage with the string; this is best-effort.
-func zeroString(s *string) {
-	if s == nil {
+// zeroBytes overwrites every byte in p with zero. Unlike a Go
+// string, a []byte is mutable. This is the best we can do in
+// Go without an unsafe zeroing library.
+func zeroBytes(p *[]byte) {
+	if p == nil {
 		return
 	}
-	*s = ""
+	for i := range *p {
+		(*p)[i] = 0
+	}
+	*p = (*p)[:0]
 }
 
 type capabilityError struct {
@@ -212,28 +219,93 @@ func registerRoutes(mux *http.ServeMux, adapter *tplinkwr841v8.Adapter, store *s
 
 // handleCapabilities returns the live capability matrix. Each
 // entry is one of the four documented states (verified, absent,
-// unsupported_or_unverified, unavailable).
+// unsupported_or_unverified, unavailable). The matrix is derived
+// from the adapter's per-capability dispatch: each security
+// endpoint is fetched once with a short timeout, and the
+// returned state is mapped to the four-state vocabulary.
+// device is not a security endpoint, so we report it as
+// "verified" only if Identify succeeds, "unavailable" otherwise.
 func handleCapabilities(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		caps := capabilitiesResponse{
-			Capabilities: map[string]string{
-				"device":            "verified",
-				"status":            "verified",
-				"clients":           "verified",
-				"wireless_security": "verified",
-				"wps":               "absent",
-				"dmz":               "verified",
-				"upnp":              "absent",
-				"remote_management": "absent",
-				"forwarding":        "verified",
-			},
-		}
+		caps := capabilitiesResponse{Capabilities: probeCapabilities(r.Context(), adapter)}
 		writeJSON(w, http.StatusOK, caps)
 	}
+}
+
+// probeCapabilities returns the live state of every endpoint the
+// runtime exposes. The runtime has already authenticated once
+// at startup; each probe reuses the session. There are 9 caps
+// in total: device, status, clients are NOT security caps
+// (the adapter has typed methods for them); the remaining 6
+// go through SecurityCapability, which returns the four-state
+// vocabulary. absent = firmware does not implement; verified =
+// runtime parsed the response; unsupported_or_unverified =
+// runtime has no parser; unavailable = transport error.
+func probeCapabilities(ctx context.Context, adapter *tplinkwr841v8.Adapter) map[string]string {
+	out := map[string]string{
+		"device":            "unverified",
+		"status":            "unverified",
+		"clients":           "unverified",
+		"wireless":          "unverified",
+		"wps":               "unverified",
+		"dmz":               "unverified",
+		"upnp":              "unverified",
+		"remote-management": "unverified",
+		"forwarding":        "unverified",
+	}
+	// Non-security caps have typed methods on the adapter.
+	type nonSecurityProbe struct {
+		name string
+		fn   func(context.Context) error
+	}
+	nonSecurity := []nonSecurityProbe{
+		{"status", func(c context.Context) error { _, e := adapter.Status(c); return e }},
+		{"clients", func(c context.Context) error { _, e := adapter.Clients(c); return e }},
+		{"device", func(c context.Context) error { _, e := adapter.Identify(c); return e }},
+	}
+	for _, ns := range nonSecurity {
+		nctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		err := ns.fn(nctx)
+		cancel()
+		if err == nil {
+			out[ns.name] = "verified"
+		} else {
+			out[ns.name] = "unavailable"
+		}
+	}
+	// Security caps go through SecurityCapability, which already
+	// classifies the response into the four-state vocabulary.
+	securityCaps := []string{
+		tplinkwr841v8.OpWireless,
+		tplinkwr841v8.OpWPS,
+		tplinkwr841v8.OpDMZ,
+		tplinkwr841v8.OpUPnP,
+		tplinkwr841v8.OpRemoteManagement,
+		tplinkwr841v8.OpForwarding,
+	}
+	for _, name := range securityCaps {
+		nctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		_, err := adapter.SecurityCapability(nctx, name)
+		cancel()
+		if err == nil {
+			out[name] = "verified"
+			continue
+		}
+		if errors.Is(err, domain.ErrObservationAbsent) {
+			out[name] = "absent"
+			continue
+		}
+		if errors.Is(err, domain.ErrUnverifiedEndpoint) {
+			out[name] = "unsupported_or_unverified"
+			continue
+		}
+		out[name] = "unavailable"
+	}
+	return out
 }
 
 func handleDevice(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
@@ -327,10 +399,14 @@ func securityHandler(adapter *tplinkwr841v8.Adapter, name string) http.HandlerFu
 			writeUnavailable(w, name+" failed: "+err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"state":  "verified",
-			"result": state,
-		})
+		if state.WPSEnabled == domain.True {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"state":  "verified",
+				"result": state,
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"state": "unverified"})
 	}
 }
 
