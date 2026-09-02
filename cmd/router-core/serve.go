@@ -236,15 +236,50 @@ func handleCapabilities(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
 	}
 }
 
-// probeCapabilities issues one short probe per security endpoint
-// and returns the live state. The runtime has already
-// authenticated once on startup; each probe reuses the session.
-// device is special: it is the only non-security endpoint, and
-// it is reported as "verified" only if Identify succeeds.
+// probeCapabilities returns the live state of every endpoint the
+// runtime exposes. The runtime has already authenticated once
+// at startup; each probe reuses the session. There are 9 caps
+// in total: device, status, clients are NOT security caps
+// (the adapter has typed methods for them); the remaining 6
+// go through SecurityCapability, which returns the four-state
+// vocabulary. absent = firmware does not implement; verified =
+// runtime parsed the response; unsupported_or_unverified =
+// runtime has no parser; unavailable = transport error.
 func probeCapabilities(ctx context.Context, adapter *tplinkwr841v8.Adapter) map[string]string {
+	out := map[string]string{
+		"device":            "unverified",
+		"status":            "unverified",
+		"clients":           "unverified",
+		"wireless":          "unverified",
+		"wps":               "unverified",
+		"dmz":               "unverified",
+		"upnp":              "unverified",
+		"remote-management": "unverified",
+		"forwarding":        "unverified",
+	}
+	// Non-security caps have typed methods on the adapter.
+	type nonSecurityProbe struct {
+		name string
+		fn   func(context.Context) error
+	}
+	nonSecurity := []nonSecurityProbe{
+		{"status", func(c context.Context) error { _, e := adapter.Status(c); return e }},
+		{"clients", func(c context.Context) error { _, e := adapter.Clients(c); return e }},
+		{"device", func(c context.Context) error { _, e := adapter.Identify(c); return e }},
+	}
+	for _, ns := range nonSecurity {
+		nctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		err := ns.fn(nctx)
+		cancel()
+		if err == nil {
+			out[ns.name] = "verified"
+		} else {
+			out[ns.name] = "unavailable"
+		}
+	}
+	// Security caps go through SecurityCapability, which already
+	// classifies the response into the four-state vocabulary.
 	securityCaps := []string{
-		tplinkwr841v8.OpStatus,
-		tplinkwr841v8.OpDHCPClients,
 		tplinkwr841v8.OpWireless,
 		tplinkwr841v8.OpWPS,
 		tplinkwr841v8.OpDMZ,
@@ -252,41 +287,23 @@ func probeCapabilities(ctx context.Context, adapter *tplinkwr841v8.Adapter) map[
 		tplinkwr841v8.OpRemoteManagement,
 		tplinkwr841v8.OpForwarding,
 	}
-	out := make(map[string]string, len(securityCaps)+1)
-	for _, name := range securityCaps {
-		out[name] = "unverified"
-	}
 	for _, name := range securityCaps {
 		nctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		_, err := adapter.SecurityCapability(nctx, name)
 		cancel()
-		if err != nil {
-			// Distinguish between "firmware does not implement this
-			// capability" (404 from the live probe) and "we cannot
-			// tell right now" (network error, timeout, 5xx). The
-			// adapter has already encoded the distinction in
-			// ErrObservationAbsent vs ErrUnverifiedEndpoint.
-			if errors.Is(err, domain.ErrObservationAbsent) {
-				out[name] = "absent"
-				continue
-			}
-			if errors.Is(err, domain.ErrUnverifiedEndpoint) {
-				out[name] = "unsupported_or_unverified"
-				continue
-			}
-			out[name] = "unavailable"
+		if err == nil {
+			out[name] = "verified"
 			continue
 		}
-		out[name] = "verified"
-	}
-	if ictx, icancel := context.WithTimeout(ctx, 2*time.Second); ictx != nil {
-		_, err := adapter.Identify(ictx)
-		icancel()
-		if err == nil {
-			out["device"] = "verified"
-		} else {
-			out["device"] = "unavailable"
+		if errors.Is(err, domain.ErrObservationAbsent) {
+			out[name] = "absent"
+			continue
 		}
+		if errors.Is(err, domain.ErrUnverifiedEndpoint) {
+			out[name] = "unsupported_or_unverified"
+			continue
+		}
+		out[name] = "unavailable"
 	}
 	return out
 }
