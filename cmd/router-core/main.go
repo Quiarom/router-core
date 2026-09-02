@@ -88,12 +88,12 @@ func runReadCommand(args []string) error {
 		if err != nil {
 			return fmt.Errorf("read password: %w", err)
 		}
-		if password == "" {
+		if len(password) == 0 {
 			return errors.New("empty password")
 		}
-		defer zeroString(&password)
+		defer zeroBytes(&password)
 		if live, ok := adapter.(*tplinkwr841v8.Adapter); ok {
-			if err := live.Login(ctx, "admin", password); err != nil {
+			if err := live.Login(ctx, "admin", string(password)); err != nil {
 				return fmt.Errorf("login: %w", err)
 			}
 		}
