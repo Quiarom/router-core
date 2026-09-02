@@ -1,0 +1,28 @@
+# CODEOWNERS — default reviewers per path
+# https://docs.github.com/en/repositories/creating-and-managing-repositories/setting-up-your-repository-for-healthy-contributions/about-code-owners
+#
+# Pattern: path  @github-handle
+# The last matching pattern wins, like .gitignore.
+#
+# Action required: replace @Quiarom with the maintainer's
+# actual GitHub handle, and add any co-maintainer handles. The
+# file is parsed by GitHub on every push; until handles resolve,
+# PRs will not request a review automatically.
+
+# Default: all changes require the maintainer's review.
+*       @Quiarom
+
+# Documentation can be reviewed by either maintainer.
+# /docs/  @Quiarom
+# /README.md  @Quiarom
+# /HACKATHON_FAQ.md  @Quiarom
+# /AGENTS.md  @Quiarom
+# /CONTRIBUTING.md  @Quiarom
+# /CODE_OF_CONDUCT.md  @Quiarom
+# /SECURITY.md  @Quiarom
+# /NOTICE  @Quiarom
+
+# Safety-critical paths require a second maintainer.
+# /internal/transport/  @Quiarom @co-maintainer
+# /internal/adapters/tplinkwr841v8/  @Quiarom @co-maintainer
+# /internal/architecture_test.go  @Quiarom @co-maintainer
