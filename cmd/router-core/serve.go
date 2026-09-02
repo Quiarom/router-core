@@ -224,7 +224,7 @@ func handleCapabilities(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
 				"device":            "verified",
 				"status":            "verified",
 				"clients":           "verified",
-				"wireless_security": "unavailable",
+				"wireless_security": "verified",
 				"wps":               "absent",
 				"dmz":               "verified",
 				"upnp":              "absent",
@@ -335,17 +335,30 @@ func securityHandler(adapter *tplinkwr841v8.Adapter, name string) http.HandlerFu
 }
 
 func handleSecurityWireless(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
-	// Wireless security is a real firmware surface (verified
-	// 2026-08-31) but the parser is still a placeholder. Until
-	// the parser is wired, the handler returns 503 unavailable
-	// with a clear reason. The agent correctly reports this
-	// as "unavailable" rather than "absent".
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		writeUnavailable(w, "wireless_security parser is pending; runtime cannot decode the dashboard yet")
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		state, err := adapter.FetchWirelessSecurity(ctx)
+		if err != nil {
+			if errors.Is(err, domain.ErrUnverifiedEndpoint) {
+				writeUnsupported(w, "wireless endpoint is unverified against captured traffic")
+				return
+			}
+			if errors.Is(err, domain.ErrObservationAbsent) {
+				writeUnsupported(w, "wireless endpoint not present on this firmware build")
+				return
+			}
+			writeUnavailable(w, "wireless failed: "+err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"state":  "verified",
+			"result": state,
+		})
 	}
 }
 

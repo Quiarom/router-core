@@ -82,26 +82,29 @@ func runReadCommand(args []string) error {
 		adapter = tplinkwr841v8.New(opts.host, transport.WithTimeout(opts.timeout))
 	}
 	ctx := context.Background()
-	if args[0] == "probe" {
-		if opts.fixtures == "" {
-			fmt.Fprintf(os.Stderr, "router-core probe: reading admin password from stdin (timeout 30s)\n")
-			password, err := readPasswordNoEcho()
-			if err != nil {
-				return fmt.Errorf("read password: %w", err)
-			}
-			if password == "" {
-				return errors.New("empty password")
-			}
-			defer zeroString(&password)
-			if live, ok := adapter.(*tplinkwr841v8.Adapter); ok {
-				if err := live.Login(ctx, "admin", password); err != nil {
-					return fmt.Errorf("login: %w", err)
-				}
+	if opts.fixtures == "" {
+		fmt.Fprintf(os.Stderr, "router-core %s: reading admin password from stdin (timeout 30s)\n", args[0])
+		password, err := readPasswordNoEcho()
+		if err != nil {
+			return fmt.Errorf("read password: %w", err)
+		}
+		if password == "" {
+			return errors.New("empty password")
+		}
+		defer zeroString(&password)
+		if live, ok := adapter.(*tplinkwr841v8.Adapter); ok {
+			if err := live.Login(ctx, "admin", password); err != nil {
+				return fmt.Errorf("login: %w", err)
 			}
 		}
-		return probe(ctx, adapter, opts)
 	}
-	return inspect(ctx, adapter, opts)
+	switch args[0] {
+	case "probe":
+		return probe(ctx, adapter, opts)
+	case "inspect":
+		return inspect(ctx, adapter, opts)
+	}
+	return fmt.Errorf("unknown read subcommand %q", args[0])
 }
 
 func probe(ctx context.Context, adapter domain.RouterAdapter, opts options) error {
