@@ -142,9 +142,10 @@ func runInspect(stdout, stderr io.Writer, output string) error {
 
 // findRouterCoreBin locates the router-core binary by looking at
 // (in order):
-//   1. ROUTER_CORE_BIN environment variable (CI, packaging)
-//   2. the same directory as the running gavetero executable
-//   3. $PATH
+//  1. ROUTER_CORE_BIN environment variable (CI, packaging)
+//  2. the same directory as the running gavetero executable
+//  3. $PATH
+//
 // After `make install-user` the router-core sidecar sits in the
 // same install dir as gavetero, so case 2 is the common path.
 func findRouterCoreBin() (string, error) {
@@ -343,14 +344,19 @@ func flattenMap(m map[string]interface{}) map[string]interface{} {
 
 func flattenValue(v interface{}) interface{} {
 	if v == nil {
-		return nil
+		return ""
 	}
 	switch x := v.(type) {
 	case map[string]interface{}:
-		// Untrusted object?
+		// Untrusted object: {value, trust, source}. Extract the
+		// inner value, marking it as untrusted data when applicable.
 		if val, ok := x["value"]; ok {
 			if trust, ok2 := x["trust"].(string); ok2 && trust == "untrusted" {
-				return "~ " + toString(val)
+				s := toString(val)
+				if s == "" {
+					return "(empty)"
+				}
+				return "~ " + s
 			}
 			return val
 		}
