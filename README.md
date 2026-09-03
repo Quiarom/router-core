@@ -74,8 +74,10 @@ router-core-agent \
     --model MiniMaxAI/MiniMax-M3
 ```
 
-`serve` asks for the admin password on the terminal with echo off, keeps
-it in memory only, and zeros it on exit. Nothing is written to disk.
+`serve` reads the admin password from stdin (30 s timeout), keeps it in
+memory only, and zeros it on exit. Nothing is written to disk. Note that
+the current reader does not disable terminal echo; see
+[Troubleshooting](#troubleshooting).
 
 ## Usage
 
@@ -162,20 +164,24 @@ the extension point. The WR841N recipe is documented in
 
 ## Safety
 
-The runtime cannot change the router. This is enforced in the type
-system and in CI, not by convention:
+The runtime only reaches the observation pages listed in its adapter,
+and no mutation capability is exposed to the model. This is enforced in
+the type system and in CI, not by convention:
 
 - There is no mutating capability constant. `CapMutate` does not exist.
 - An architecture test ([`internal/architecture_test.go`](internal/architecture_test.go))
   fails the build if `POST`, `PUT` or `DELETE` appears in the runtime.
-- Every request to the router is a `GET`. The agent's only `POST` goes to
-  the LLM provider.
+- Every request to the router is a `GET` to a known, captured path. The
+  agent's only `POST` goes to the LLM provider. Because this firmware
+  family can mutate state through `GET`, the method restriction is
+  defense in depth; the allow-list of paths is the real boundary.
 - Public IPs and DNS hostnames are refused at every layer. `serve` binds
   to `127.0.0.1`; the agent refuses `--serve 0.0.0.0`.
 - Response bodies are capped at 2 MiB. Cross-host redirects are not
   followed.
-- The admin password is read from the terminal with echo off, held in a
-  `[]byte` for the process lifetime, and overwritten before release.
+- The admin password is read once from stdin, held in a `[]byte` for the
+  process lifetime, and overwritten before release. It is never passed
+  as a flag, stored in a file or logged.
 
 Report a vulnerability through [SECURITY.md](SECURITY.md).
 
@@ -190,7 +196,6 @@ Report a vulnerability through [SECURITY.md](SECURITY.md).
 | [Evidence](docs/EVIDENCE_TRACE.md) | Capture trail, prior-art comparison, recipe divergence |
 | [Prior art](docs/PRIOR_ART_PROTOCOL.md) | Protocol evidence from the WR841N family, unverified |
 | [ADRs](docs/adr/) | Every architecture decision the project has committed to |
-| [Demo](docs/demo/) | Reproducible end-to-end script |
 | [Frontend](frontend/README.md) | React dashboard: build, env vars, tests |
 | [Archive](docs/archive/) | Historical context and superseded notes |
 
@@ -229,6 +234,10 @@ reproducible without hardware.
   production.
 - **Agent answers without calling any tool**: check that `serve` is
   reachable at `--router-core-url` and that `/healthz` returns 200.
+- **The password is visible while typing**: `serve` reads it from plain
+  stdin and does not disable echo yet. Run it in a private terminal or
+  pipe it from a secret manager
+  (`pass show router | ./bin/router-core serve --host 192.168.1.1`).
 - **`--serve 0.0.0.0` refused**: intended. The agent only binds to
   loopback.
 
