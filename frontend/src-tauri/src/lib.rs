@@ -52,6 +52,15 @@ struct ConnectRequest {
     ai_api_key: Option<String>,
 }
 
+impl Drop for ConnectRequest {
+    fn drop(&mut self) {
+        self.password.zeroize();
+        if let Some(key) = self.ai_api_key.as_mut() {
+            key.zeroize();
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ConnectionInfo {
@@ -273,13 +282,25 @@ async fn connect_router(
         ));
     }
 
-    let device = fetch_json(&client, format!("{router_url}/v0/device")).await?;
+    let device = match fetch_json(&client, format!("{router_url}/v0/device")).await {
+        Ok(response) => response,
+        Err(error) => {
+            stop_services(&state);
+            return Err(error);
+        }
+    };
     if let Err(error) = validate_device(&device) {
         stop_services(&state);
         return Err(error);
     }
 
-    let agent_addr = reserve_loopback_addr()?;
+    let agent_addr = match reserve_loopback_addr() {
+        Ok(address) => address,
+        Err(error) => {
+            stop_services(&state);
+            return Err(error);
+        }
+    };
     let agent_url = format!("http://{agent_addr}");
     let mut agent_args = vec![
         "--serve".to_string(),
@@ -295,11 +316,13 @@ async fn connect_router(
         agent_args.push("--dry-run".to_string());
     }
 
-    let mut agent_command = app
-        .shell()
-        .sidecar("router-core-agent")
-        .map_err(|error| format!("No se encontró router-core-agent: {error}"))?
-        .args(agent_args);
+    let mut agent_command = match app.shell().sidecar("router-core-agent") {
+        Ok(command) => command.args(agent_args),
+        Err(error) => {
+            stop_services(&state);
+            return Err(format!("No se encontró router-core-agent: {error}"));
+        }
+    };
     if let Some(key) = request.ai_api_key.as_mut() {
         if !key.trim().is_empty() {
             agent_command = agent_command.env("OPENROUTER_API_KEY", key.trim());
@@ -307,9 +330,13 @@ async fn connect_router(
         key.zeroize();
     }
 
-    let (mut agent_events, agent_child) = agent_command
-        .spawn()
-        .map_err(|error| format!("No se pudo iniciar router-core-agent: {error}"))?;
+    let (mut agent_events, agent_child) = match agent_command.spawn() {
+        Ok(result) => result,
+        Err(error) => {
+            stop_services(&state);
+            return Err(format!("No se pudo iniciar router-core-agent: {error}"));
+        }
+    };
     tauri::async_runtime::spawn(async move {
         while let Some(event) = agent_events.recv().await {
             if let CommandEvent::Error(error) = event {
@@ -319,10 +346,14 @@ async fn connect_router(
     });
 
     {
-        let mut runtime = state
-            .runtime
-            .lock()
-            .map_err(|_| "No se pudo guardar el estado del asistente".to_string())?;
+        let mut runtime = match state.runtime.lock() {
+            Ok(runtime) => runtime,
+            Err(_) => {
+                let _ = agent_child.kill();
+                stop_services(&state);
+                return Err("No se pudo guardar el estado del asistente".to_string());
+            }
+        };
         runtime.agent = Some(agent_child);
         runtime.agent_url = Some(agent_url.clone());
     }
