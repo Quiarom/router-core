@@ -86,7 +86,7 @@ func runReadCommand(args []string) error {
 	ctx := context.Background()
 	if opts.fixtures == "" {
 		fmt.Fprintf(os.Stderr, "router-core %s: reading admin password from stdin (timeout 30s)\n", args[0])
-		password, err := readPasswordNoEcho()
+		password, err := readRouterPassword(false)
 		if err != nil {
 			return fmt.Errorf("read password: %w", err)
 		}

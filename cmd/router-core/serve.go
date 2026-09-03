@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"golang.org/x/term"
 	"os"
 	"strings"
 	"sync"
@@ -45,26 +46,43 @@ func (s *sessionStore) set(p []byte) {
 	s.password = append([]byte(nil), p...)
 }
 
-func readPasswordNoEcho() ([]byte, error) {
-	type readResult struct {
-		buf []byte
-		err error
-	}
-	ch := make(chan readResult, 1)
-	go func() {
-		buf := make([]byte, 256)
-		n, err := os.Stdin.Read(buf)
-		ch <- readResult{buf[:n], err}
-	}()
-	select {
-	case res := <-ch:
-		if res.err != nil && res.err != io.EOF {
-			return nil, res.err
+// readRouterPassword acquires the router admin password in a way that
+// respects the four ways the user might supply it:
+//
+//   1. --password-stdin flag: read plaintext from os.Stdin (intended for
+//      systemd, container secrets, scripts). Refuses if no TTY.
+//   2. Interactive TTY: prompt with prompt printed to stderr, then
+//      read using golang.org/x/term.ReadPassword which DISABLES
+//      terminal echo for the duration of the read. The previous
+//      implementation used os.Stdin.Read which did NOT disable
+//      echo and so the password was visible on the terminal.
+//   3. Non-interactive without --password-stdin: fail fast with
+//      an actionable error. The previous 30-second wait was
+//      blocking CI and scripts in non-interactive mode.
+//
+// NEVER accepts --password <secret>: that would put the secret
+// on the process command line, where it is visible to ps(1)
+// and any /proc snapshot.
+func readRouterPassword(stdinFlag bool) ([]byte, error) {
+	if stdinFlag {
+		if term.IsTerminal(int(os.Stdin.Fd())) {
+			return nil, errors.New("--password-stdin is set but stdin is a TTY; refusing to read a password from a terminal in plaintext")
 		}
-		return []byte(strings.TrimRight(string(res.buf), "\r\n")), nil
-	case <-time.After(30 * time.Second):
-		return nil, errors.New("timed out waiting 30s for password on stdin")
+		buf, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return nil, fmt.Errorf("read stdin: %w", err)
+		}
+		return []byte(strings.TrimRight(string(buf), "\r\n")), nil
 	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return nil, errors.New("router-core: no TTY available for interactive password entry. Use --password-stdin to read from a pipe (CI, systemd, container secrets).")
+	}
+	fmt.Fprintln(os.Stderr, "router-core: enter router admin password (input hidden):")
+	pw, err := term.ReadPassword(int(os.Stdin.Fd()))
+	if err != nil {
+		return nil, fmt.Errorf("read password from TTY: %w", err)
+	}
+	return pw, nil
 }
 
 func runServeCommand(args []string) error {
@@ -75,6 +93,7 @@ func runServeCommand(args []string) error {
 	timeout := fs.Duration("timeout", 5*time.Second, "per-request timeout to the router")
 	mock := fs.Bool("mock", false, "run against a fixture-backed adapter (no network)")
 	mockPath := fs.String("mock-fixture", "", "path to a synthetic fixture (default: fixtures/synthetic/tplink-wr841n-v8)")
+	passwordStdin := fs.Bool("password-stdin", false, "read the admin password from stdin (refuses if stdin is a TTY)")
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) || err == flag.ErrHelp {
 			return nil
@@ -100,7 +119,7 @@ func runServeCommand(args []string) error {
 			return fmt.Errorf("refusing to observe host %q: not loopback/RFC1918", *host)
 		}
 		fmt.Fprintf(os.Stderr, "router-core serve: reading admin password from stdin (timeout 30s)\n")
-		password, err := readPasswordNoEcho()
+		password, err := readRouterPassword(*passwordStdin)
 		if err != nil {
 			return fmt.Errorf("read password: %w", err)
 		}
