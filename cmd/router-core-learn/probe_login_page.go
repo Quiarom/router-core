@@ -12,7 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quiarom/router-core/cmd/router-core-learn/sanitize"
+	"github.com/Quiarom/router-core/internal/lab/sanitize"
 )
 
 // newProbeLoginPageCmd builds the `probe-login-page` subcommand. It

@@ -16,7 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quiarom/router-core/cmd/router-core-learn/sanitize"
+	"github.com/Quiarom/router-core/internal/lab/sanitize"
 )
 
 // CapabilityState is the per-capability evidence classification.
@@ -270,7 +270,7 @@ func runObserve(cmd *cobra.Command, host, outDir string, passwordStdin, verbose 
 		Date:          time.Now().UTC().Format(time.RFC3339),
 		Host:          host,
 		FOutOutTarget: expectedFirmware,
-		Sanitization:  "cmd/router-core-learn/sanitize applied to every body in memory before persistence; structural session token and Authorization material replaced with placeholders; MACs, SSIDs, Wi-Fi keys, password fields redacted; fingerprint preserved",
+		Sanitization:  "internal/lab/sanitize applied to every body in memory before persistence; structural session token and Authorization material replaced with placeholders; MACs, SSIDs, Wi-Fi keys, password fields redacted; fingerprint preserved",
 	}
 	matrix.Authentication = authSummary{
 		Recipe:          "GET / with `Authorization: Basic <base64(admin:plaintext)>` HTTP header (NOT cookie, NOT md5hex)",
