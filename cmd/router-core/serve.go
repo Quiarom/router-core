@@ -288,32 +288,38 @@ func handleCapabilities(adapter domain.RouterAdapter) http.HandlerFunc {
 // vocabulary. absent = firmware does not implement; verified =
 // runtime parsed the response; unsupported_or_unverified =
 // runtime has no parser; unavailable = transport error.
+// probeCapabilities returns the live state of every endpoint the
+// runtime exposes. The runtime has already authenticated once at
+// startup; each probe reuses the session.
+//
+// There are 9 capabilities in total: device, status, clients are
+// NOT security caps (the adapter has typed methods for them); the
+// remaining 6 (wireless_security, wps, dmz, upnp, remote_management,
+// forwarding) go through SecurityCapability, which already
+// classifies the response into the four-state vocabulary.
+//
+//	verified                    adapter read the value
+//	absent                      firmware does not implement
+//	unsupported_or_unverified   runtime has no parser
+//	unavailable                 transport failure, timeout, refused
+//
+// The probe distinguishes absent from unsupported_or_unverified by
+// inspecting the underlying error: ErrObservationAbsent means the
+// firmware did not return the field; ErrUnverifiedEndpoint means
+// the runtime has no parser; anything else is transport-level
+// failure.
 func probeCapabilities(ctx context.Context, adapter domain.RouterAdapter) map[string]string {
-	// Adapters that implement securityCapable can report the per-cap
-	// security matrix. The fixture adapter does not, so all 6 security
-	// caps are reported as unsupported_or_unverified in mock mode.
 	sc, _ := adapter.(securityCapable)
-	_ = sc // for future per-cap dispatch
-	out := map[string]string{
-		"device":            "unverified",
-		"status":            "unverified",
-		"clients":           "unverified",
-		"wireless":          "unverified",
-		"wps":               "unverified",
-		"dmz":               "unverified",
-		"upnp":              "unverified",
-		"remote-management": "unverified",
-		"forwarding":        "unverified",
-	}
+	out := map[string]string{}
 	// Non-security caps have typed methods on the adapter.
 	type nonSecurityProbe struct {
 		name string
 		fn   func(context.Context) error
 	}
 	nonSecurity := []nonSecurityProbe{
+		{"device", func(c context.Context) error { _, e := adapter.Identify(c); return e }},
 		{"status", func(c context.Context) error { _, e := adapter.Status(c); return e }},
 		{"clients", func(c context.Context) error { _, e := adapter.Clients(c); return e }},
-		{"device", func(c context.Context) error { _, e := adapter.Identify(c); return e }},
 	}
 	for _, ns := range nonSecurity {
 		nctx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -325,8 +331,9 @@ func probeCapabilities(ctx context.Context, adapter domain.RouterAdapter) map[st
 			out[ns.name] = "unavailable"
 		}
 	}
-	// Security caps go through SecurityCapability, which already
-	// classifies the response into the four-state vocabulary.
+	// Security caps go through SecurityCapability when the adapter
+	// implements it. The fixture adapter does not; in mock mode all 6
+	// security caps are reported as unsupported_or_unverified.
 	securityCaps := []string{
 		tplinkwr841v8.OpWireless,
 		tplinkwr841v8.OpWPS,
@@ -336,12 +343,11 @@ func probeCapabilities(ctx context.Context, adapter domain.RouterAdapter) map[st
 		tplinkwr841v8.OpForwarding,
 	}
 	for _, name := range securityCaps {
-		nctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		if sc == nil {
 			out[name] = "unsupported_or_unverified"
-			cancel()
 			continue
 		}
+		nctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		_, err := sc.SecurityCapability(nctx, name)
 		cancel()
 		if err == nil {
@@ -357,6 +363,26 @@ func probeCapabilities(ctx context.Context, adapter domain.RouterAdapter) map[st
 			continue
 		}
 		out[name] = "unavailable"
+	}
+	// Expose each security cap under both the Op name (with
+	// hyphens, e.g. "remote-management") and the agent-facing name
+	// (with underscores, e.g. "remote_management"). They are the
+	// same observation; the duplication is for backward compat
+	// with the existing test surface and the agent tool list
+	// (which uses underscored names).
+	type alias struct{ from, to string }
+	aliases := []alias{
+		{tplinkwr841v8.OpWireless, "wireless_security"},
+		{tplinkwr841v8.OpWPS, "wps_state"},
+		{tplinkwr841v8.OpDMZ, "dmz_state"},
+		{tplinkwr841v8.OpUPnP, "upnp_state"},
+		{tplinkwr841v8.OpRemoteManagement, "remote_management"},
+		{tplinkwr841v8.OpForwarding, "forwarding_rules"},
+	}
+	for _, a := range aliases {
+		if v, ok := out[a.from]; ok {
+			out[a.to] = v
+		}
 	}
 	return out
 }

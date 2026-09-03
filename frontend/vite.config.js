@@ -12,9 +12,17 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),
+      // Web shim for the Tauri API. The desktop build uses
+      // the real @tauri-apps/api/core from node_modules.
+      '@tauri-apps/api/core': path.resolve(import.meta.dirname, './src/lib/web/tauri-core.js'),
     },
   },
   server: {
+    port: 5173,
+    strictPort: true,
+    watch: {
+      ignored: ['**/src-tauri/**'],
+    },
     proxy: {
       '/api/chat': {
         target: 'http://127.0.0.1:8585',
@@ -29,5 +37,3 @@ export default defineConfig({
     },
   },
 })
-
-

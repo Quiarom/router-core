@@ -9,9 +9,7 @@ import {
   Bot
 } from "lucide-react";
 import { mockDevice, mockStatus, mockClients, mockCapabilities } from "@/data/mockData";
-
-const AGENT_API_URL =
-  import.meta.env.VITE_AGENT_API_URL || "http://127.0.0.1:8585/v0/chat";
+import { askAssistant } from "@/lib/desktop";
 
 export function AiAssistantView({ isLive = false }) {
   const [query, setQuery] = useState("");
@@ -109,14 +107,12 @@ export function AiAssistantView({ isLive = false }) {
     }
 
     try {
-      const response = await fetch(AGENT_API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question })
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload.error || `El agente respondió HTTP ${response.status}`);
+      const response = await askAssistant(question);
+      const payload = response.data || {};
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error(
+          payload.error || response.error || `El agente respondió HTTP ${response.status}`
+        );
       }
 
       setConversations((current) =>

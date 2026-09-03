@@ -20,8 +20,8 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/Quiarom/router-core/internal/lab/sanitize"
 	"github.com/Quiarom/router-core/internal/domain"
+	"github.com/Quiarom/router-core/internal/lab/sanitize"
 )
 
 const (
