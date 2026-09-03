@@ -37,9 +37,9 @@ import (
 type EventKind string
 
 const (
-	EventToolCall   EventKind = "tool_call"
+	EventToolCall    EventKind = "tool_call"
 	EventObservation EventKind = "observation"
-	EventCompleted  EventKind = "completed"
+	EventCompleted   EventKind = "completed"
 )
 
 // Event is a single observable moment in the investigation.
@@ -48,13 +48,13 @@ const (
 // always has one. The frontend can render a vertical trace
 // from this slice.
 type Event struct {
-	Kind       EventKind      `json:"kind"`
-	Tool       string         `json:"tool,omitempty"`
-	Path       string         `json:"path,omitempty"`
-	HTTPStatus int            `json:"http_status,omitempty"`
-	State      string         `json:"state,omitempty"`
-	Note       string         `json:"note,omitempty"`
-	At         string         `json:"at,omitempty"` // RFC3339 timestamp
+	Kind       EventKind `json:"kind"`
+	Tool       string    `json:"tool,omitempty"`
+	Path       string    `json:"path,omitempty"`
+	HTTPStatus int       `json:"http_status,omitempty"`
+	State      string    `json:"state,omitempty"`
+	Note       string    `json:"note,omitempty"`
+	At         string    `json:"at,omitempty"` // RFC3339 timestamp
 }
 
 // NewToolCallEvent records the moment the model requests a tool.
@@ -140,6 +140,7 @@ func init() {
 // substrings in any of its free-text fields. Two checks:
 //   - exact substring match (psk=, adminPassword=, etc.)
 //   - standalone credential word (psk, password, etc.)
+//
 // Both are case-insensitive.
 func (e Event) Validate() error {
 	combined := strings.ToLower(e.Tool + " " + e.Path + " " + e.State + " " + e.Note)

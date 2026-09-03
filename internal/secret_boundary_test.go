@@ -159,9 +159,9 @@ func TestAgentPayloadShape(t *testing.T) {
 		Provenance:        domain.ProvenanceObserved,
 	}
 	rs := domain.RouterStatus{
-		Reachable: domain.True,
-		WANStatus: domain.WANConnected,
-		Uptime:    24 * 60 * 60 * 1_000_000_000, // 24h in ns
+		Reachable:  domain.True,
+		WANStatus:  domain.WANConnected,
+		Uptime:     24 * 60 * 60 * 1_000_000_000, // 24h in ns
 		UptimeSecs: domain.SomeInt(86400),
 		Provenance: domain.ProvenanceObserved,
 	}

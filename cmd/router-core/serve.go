@@ -11,10 +11,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"golang.org/x/term"
 	"io"
 	"net"
 	"net/http"
-	"golang.org/x/term"
 	"os"
 	"strings"
 	"sync"
@@ -49,16 +49,16 @@ func (s *sessionStore) set(p []byte) {
 // readRouterPassword acquires the router admin password in a way that
 // respects the four ways the user might supply it:
 //
-//   1. --password-stdin flag: read plaintext from os.Stdin (intended for
-//      systemd, container secrets, scripts). Refuses if no TTY.
-//   2. Interactive TTY: prompt with prompt printed to stderr, then
-//      read using golang.org/x/term.ReadPassword which DISABLES
-//      terminal echo for the duration of the read. The previous
-//      implementation used os.Stdin.Read which did NOT disable
-//      echo and so the password was visible on the terminal.
-//   3. Non-interactive without --password-stdin: fail fast with
-//      an actionable error. The previous 30-second wait was
-//      blocking CI and scripts in non-interactive mode.
+//  1. --password-stdin flag: read plaintext from os.Stdin (intended for
+//     systemd, container secrets, scripts). Refuses if no TTY.
+//  2. Interactive TTY: prompt with prompt printed to stderr, then
+//     read using golang.org/x/term.ReadPassword which DISABLES
+//     terminal echo for the duration of the read. The previous
+//     implementation used os.Stdin.Read which did NOT disable
+//     echo and so the password was visible on the terminal.
+//  3. Non-interactive without --password-stdin: fail fast with
+//     an actionable error. The previous 30-second wait was
+//     blocking CI and scripts in non-interactive mode.
 //
 // NEVER accepts --password <secret>: that would put the secret
 // on the process command line, where it is visible to ps(1)
