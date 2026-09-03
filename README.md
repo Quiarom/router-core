@@ -221,7 +221,7 @@ agent, start with [`AGENTS.md`](AGENTS.md).
 | [`docs/STATUS.md`](docs/STATUS.md) | non-engineer project status |
 | [`docs/adr/`](docs/adr/) | architecture decision records (0001, 0002, 0003, 0005) |
 | [`NOTICE`](NOTICE) | third-party attribution (Devin AI baseline, prior art) |
-| [`HACKATHON_FAQ.md`](HACKATHON_FAQ.md) | MiniMax-Week judging context |
+| [`docs/hackathon/minimax-week-2026.md`](docs/hackathon/minimax-week-2026.md) | MiniMax-Week judging context |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | branching model, commit conventions, PR rules |
 | [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) | Contributor Covenant v2.1 |
 | [`SECURITY.md`](SECURITY.md) | private vulnerability disclosure |
