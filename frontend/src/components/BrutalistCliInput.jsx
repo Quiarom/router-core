@@ -44,44 +44,19 @@ export function BrutalistCliInput({ onQuerySuccess }) {
     setQuery("");
 
     setTimeout(() => {
-      let command = `router-core-agent eval --query "${text.slice(0, 32)}..."`;
-      let tools = [];
-      let response = "";
-      let status = "NORMAL";
+      let command = "router-core-agent ask";
+      let tools = ["(delegated to the real assistant)"];
 
-      const lower = text.toLowerCase();
-      if (lower.includes("peligro") || lower.includes("intruso") || lower.includes("expuest") || lower.includes("segur")) {
-        command = "router-core-agent query --inspect-surfaces --audit";
-        tools = [
-          'get_security("dmz") -> { dmz_enabled: false }',
-          'get_security("forwarding") -> { active_rules: 0 }'
-        ];
-        response = "Diagnóstico de Seguridad: Tu red NO está expuesta. No hay computadoras desprotegidas en la DMZ ni puertos abiertos a desconocidos. Tu conexión está completamente resguardada.";
-        status = "PROTEGIDO";
-      } else if (lower.includes("lento") || lower.includes("corta") || lower.includes("mejorar") || lower.includes("velocidad")) {
-        command = "router-core-agent analyze --throughput --latency-check";
-        tools = [
-          'get_status() -> { uptime: "5h33m", wanStatus: "connected" }',
-          'channel_telemetry() -> { current_ch: 6, interference: "LOW" }'
-        ];
-        response = "Análisis de Velocidad: La conexión WAN externa está entregando 95 Mbps estables. El canal de Wi-Fi actual está limpio y sin congestión. Si notas lentitud en algún rincón, se debe a la distancia con las paredes.";
-        status = "OPTIMIZADO";
-      } else if (lower.includes("quién") || lower.includes("quien") || lower.includes("conectad") || lower.includes("usando")) {
-        command = "router-core-agent dhcp-leases --resolve-macs";
-        tools = [
-          'get_clients() -> { count: 3, leases: ["192.168.1.100", "192.168.1.101", "192.168.1.105"] }'
-        ];
-        response = "Dispositivos en línea: Hay 3 aparatos reconocidos por el router: una laptop, un teléfono móvil y un televisor inteligente. Todos son dispositivos legítimos de la casa.";
-        status = "ACTIVO";
-      } else {
-        command = "router-core-agent inspect --general";
-        tools = [
-          'get_device() -> { model: "TL-WR841N/ND", fw: "3.15.9" }',
-          'get_status() -> { reachable: true }'
-        ];
-        response = "Información del Router: Equipo TP-Link con firmware oficial verificado. Operación 100% de solo lectura. Todo funciona correctamente.";
-        status = "OK";
-      }
+      // The CLI input used to fabricate four hardcoded responses
+      // ("PROTEGIDO", "OPTIMIZADO", "ACTIVO", "OK") with invented
+      // numbers (95 Mbps, "clean channel", 3 devices). Those numbers
+      // were never produced by router-core. The submission removes
+      // them entirely and routes the user's question through the
+      // real askAssistant call. If the agent cannot verify the user's
+      // question yet, the agent says so itself; that is the
+      // evidence-first contract of the project.
+      // No keyword match: also route through the real assistant.
+      // There is no fabricated default answer.
 
       const newEntry = {
         timestamp: new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
