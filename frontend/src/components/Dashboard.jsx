@@ -19,15 +19,22 @@ import {
   mockCapabilities
 } from "@/data/mockData";
 
+const ROUTER_API_URL = import.meta.env.VITE_ROUTER_API_URL || "/api/router";
+
 export function Dashboard({ isLive, onWanStatusChange }) {
-  const [deviceData, setDeviceData] = useState(mockDevice);
-  const [statusData, setStatusData] = useState(mockStatus);
-  const [clientsData, setClientsData] = useState(mockClients);
-  const [capsData, setCapsData] = useState(mockCapabilities);
+  const [liveDeviceData, setLiveDeviceData] = useState(null);
+  const [liveStatusData, setLiveStatusData] = useState(null);
+  const [liveClientsData, setLiveClientsData] = useState(null);
+  const [liveCapsData, setLiveCapsData] = useState(null);
   const [liveError, setLiveError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [showAdvancedTelemetry, setShowAdvancedTelemetry] = useState(false);
   const [copiedIp, setCopiedIp] = useState(false);
+
+  const deviceData = isLive && liveDeviceData ? liveDeviceData : mockDevice;
+  const statusData = isLive && liveStatusData ? liveStatusData : mockStatus;
+  const clientsData = isLive && liveClientsData ? liveClientsData : mockClients;
+  const capsData = isLive && liveCapsData ? liveCapsData : mockCapabilities;
 
   const handleCopyIp = () => {
     const ip = deviceData.managementAddress || "192.168.1.1";
@@ -36,53 +43,69 @@ export function Dashboard({ isLive, onWanStatusChange }) {
     setTimeout(() => setCopiedIp(false), 2000);
   };
 
-  const refreshData = useCallback(async () => {
-    if (!isLive) {
-      setDeviceData(mockDevice);
-      setStatusData(mockStatus);
-      setClientsData(mockClients);
-      setCapsData(mockCapabilities);
-      setLiveError(null);
-      if (onWanStatusChange && mockStatus.wanStatus) {
-        onWanStatusChange(mockStatus.wanStatus);
-      }
-      return;
-    }
-
+  const fetchLiveData = useCallback(async () => {
     setLoading(true);
     setLiveError(null);
 
     try {
+      const fetchEndpoint = async (path) => {
+        try {
+          const res = await fetch(`${ROUTER_API_URL}${path}`);
+          const json = await res.json().catch(() => null);
+          return json;
+        } catch {
+          return null;
+        }
+      };
+
       const [devRes, statRes, cliRes, capRes] = await Promise.all([
-        fetch("http://127.0.0.1:8484/v0/device").then((r) => (r.ok ? r.json() : null)),
-        fetch("http://127.0.0.1:8484/v0/status").then((r) => (r.ok ? r.json() : null)),
-        fetch("http://127.0.0.1:8484/v0/clients").then((r) => (r.ok ? r.json() : null)),
-        fetch("http://127.0.0.1:8484/v0/capabilities").then((r) => (r.ok ? r.json() : null)),
+        fetchEndpoint("/v0/device"),
+        fetchEndpoint("/v0/status"),
+        fetchEndpoint("/v0/clients"),
+        fetchEndpoint("/v0/capabilities"),
       ]);
 
-      if (devRes) setDeviceData(devRes);
+      if (devRes && devRes.vendor) setLiveDeviceData(devRes);
       if (statRes) {
-        setStatusData(statRes);
+        setLiveStatusData(statRes);
         if (onWanStatusChange && statRes.wanStatus) {
           onWanStatusChange(statRes.wanStatus);
         }
       }
-      if (cliRes) setClientsData(cliRes);
-      if (capRes) setCapsData(capRes);
+      if (cliRes && cliRes.clients) setLiveClientsData(cliRes);
+      if (capRes && capRes.capabilities) setLiveCapsData(capRes);
 
       if (!devRes && !statRes) {
-        setLiveError("No se pudo conectar con router-core serve en http://127.0.0.1:8484. Mostrando datos locales de respaldo.");
+        setLiveError(`No se pudo conectar con router-core serve en ${ROUTER_API_URL}. Mostrando datos locales de respaldo.`);
       }
     } catch {
-      setLiveError("Error al conectar con 127.0.0.1:8484. Asegúrate de ejecutar: ./bin/router-core serve --host 192.168.1.1");
+      setLiveError(`Error al conectar con ${ROUTER_API_URL}. Inicia el servicio: ./bin/router-core serve --mock (o --host 192.168.1.1)`);
     } finally {
       setLoading(false);
     }
-  }, [isLive, onWanStatusChange]);
+  }, [onWanStatusChange]);
+
+  const refreshData = () => {
+    if (isLive) {
+      fetchLiveData();
+    }
+  };
 
   useEffect(() => {
-    refreshData();
-  }, [refreshData]);
+    if (!isLive) return;
+
+    let cancelled = false;
+    const run = async () => {
+      await Promise.resolve();
+      if (!cancelled) {
+        fetchLiveData();
+      }
+    };
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [isLive, fetchLiveData]);
 
   const isWanConnected = statusData.wanStatus === "connected" || statusData.reachable === "true";
   const clientCount = clientsData.clients?.length || 0;
@@ -202,10 +225,7 @@ export function Dashboard({ isLive, onWanStatusChange }) {
 
       {/* 4. GUÍA CLARA Y SIMPLE */}
       <section>
-        <HelpGuide
-          clientCount={clientCount}
-          isWanConnected={isWanConnected}
-        />
+        <HelpGuide />
       </section>
 
       {/* 5. FUNCIONES DEL ROUTER (Colapsable) */}
@@ -232,7 +252,11 @@ export function Dashboard({ isLive, onWanStatusChange }) {
 
         {showAdvancedTelemetry && (
           <div className="mt-4 pt-4 border-t-2 border-neutral-800">
-            <CapabilitiesGrid capabilities={capsData.capabilities} />
+            <CapabilitiesGrid
+              capabilities={capsData.capabilities}
+              isLive={isLive}
+              routerApiUrl={ROUTER_API_URL}
+            />
           </div>
         )}
       </section>

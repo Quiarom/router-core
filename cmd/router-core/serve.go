@@ -14,7 +14,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -69,6 +71,8 @@ func runServeCommand(args []string) error {
 	host := fs.String("host", "192.168.1.1", "local router address (RFC1918 literal)")
 	addr := fs.String("addr", "127.0.0.1:8484", "loopback HTTP listen address")
 	timeout := fs.Duration("timeout", 5*time.Second, "per-request timeout to the router")
+	mock := fs.Bool("mock", false, "serve mock fixtures from fixtures/frontend-mocks")
+	fixturesDir := fs.String("fixtures", "fixtures/frontend-mocks", "directory containing mock JSON fixtures")
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) || err == flag.ErrHelp {
 			return nil
@@ -78,6 +82,21 @@ func runServeCommand(args []string) error {
 	if !isLoopbackAddr(*addr) {
 		return fmt.Errorf("refusing to serve on non-loopback address %q (loopback only)", *addr)
 	}
+
+	if *mock {
+		fmt.Fprintf(os.Stderr, "router-core serve: running in mock fixtures mode (%s), listening on %s\n", *fixturesDir, *addr)
+		mux := http.NewServeMux()
+		registerMockRoutes(mux, *fixturesDir)
+		srv := &http.Server{
+			Addr:              *addr,
+			Handler:           withLocalCORS(mux),
+			ReadHeaderTimeout: 5 * time.Second,
+			WriteTimeout:      10 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		}
+		return srv.ListenAndServe()
+	}
+
 	if !isRFC1918OrLoopback(*host) {
 		return fmt.Errorf("refusing to observe host %q: not loopback/RFC1918", *host)
 	}
@@ -108,7 +127,7 @@ func runServeCommand(args []string) error {
 
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           mux,
+		Handler:           withLocalCORS(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      10 * time.Second,
 		IdleTimeout:       60 * time.Second,
@@ -367,4 +386,81 @@ func handleSecurityRemoteManagement(adapter *tplinkwr841v8.Adapter) http.Handler
 
 func handleSecurityForwarding(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
 	return securityHandler(adapter, tplinkwr841v8.OpForwarding)
+}
+
+func withLocalCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			if !isLocalOrigin(origin) {
+				writeJSON(w, http.StatusForbidden, capabilityError{State: "unavailable", Reason: "origin not allowed"})
+				return
+			}
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		}
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isLocalOrigin(rawOrigin string) bool {
+	parsed, err := url.Parse(rawOrigin)
+	if err != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func registerMockRoutes(mux *http.ServeMux, fixturesDir string) {
+	serveFileOrJSON := func(subpath string, defaultStatus int) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			path := filepath.Join(fixturesDir, subpath)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				writeUnavailable(w, "mock fixture missing: "+subpath)
+				return
+			}
+			var parsed struct {
+				State string `json:"state"`
+			}
+			_ = json.Unmarshal(data, &parsed)
+			status := defaultStatus
+			switch parsed.State {
+			case "unavailable":
+				status = http.StatusServiceUnavailable
+			case "unsupported_or_unverified":
+				status = http.StatusNotFound
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = w.Write(data)
+		}
+	}
+
+	mux.HandleFunc("/healthz", serveFileOrJSON("healthz.json", http.StatusOK))
+	mux.HandleFunc("/v0/device", serveFileOrJSON("device.json", http.StatusOK))
+	mux.HandleFunc("/v0/status", serveFileOrJSON("status.json", http.StatusOK))
+	mux.HandleFunc("/v0/clients", serveFileOrJSON("clients.json", http.StatusOK))
+	mux.HandleFunc("/v0/capabilities", serveFileOrJSON("capabilities.json", http.StatusOK))
+	mux.HandleFunc("/v0/security/wireless", serveFileOrJSON("security/wireless.json", http.StatusServiceUnavailable))
+	mux.HandleFunc("/v0/security/wps", serveFileOrJSON("security/wps.json", http.StatusNotFound))
+	mux.HandleFunc("/v0/security/dmz", serveFileOrJSON("security/dmz.json", http.StatusOK))
+	mux.HandleFunc("/v0/security/upnp", serveFileOrJSON("security/upnp.json", http.StatusNotFound))
+	mux.HandleFunc("/v0/security/remote-management", serveFileOrJSON("security/remote-management.json", http.StatusNotFound))
+	mux.HandleFunc("/v0/security/forwarding", serveFileOrJSON("security/forwarding.json", http.StatusOK))
 }

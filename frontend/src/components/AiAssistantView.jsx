@@ -8,11 +8,12 @@ import {
   ChevronUp,
   Bot
 } from "lucide-react";
+import { mockDevice, mockStatus, mockClients, mockCapabilities } from "@/data/mockData";
 
 const AGENT_API_URL =
   import.meta.env.VITE_AGENT_API_URL || "http://127.0.0.1:8585/v0/chat";
 
-export function AiAssistantView() {
+export function AiAssistantView({ isLive = false }) {
   const [query, setQuery] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -52,6 +53,60 @@ export function AiAssistantView() {
         steps: []
       }
     ]);
+
+    if (!isLive) {
+      setTimeout(() => {
+        const mockSteps = [
+          { tool: "get_device", path: "/v0/device", http_status: 200, result: mockDevice },
+          { tool: "get_status", path: "/v0/status", http_status: 200, result: mockStatus },
+          { tool: "get_clients", path: "/v0/clients", http_status: 200, result: mockClients },
+          { tool: "get_capabilities", path: "/v0/capabilities", http_status: 200, result: mockCapabilities }
+        ];
+
+        let mockAnswer = "Hechos observados en simulación local:\n\n" +
+          "• **Dispositivo**: " + mockDevice.vendor + " " + mockDevice.model + " (Firmware " + mockDevice.firmwareVersion.value + ").\n" +
+          "• **Estado WAN**: " + (mockStatus.wanStatus === "connected" ? "Conectado a Internet" : "Sin conexión") + " con " + (mockStatus.uptime || "5h 33m") + " de actividad.\n" +
+          "• **Equipos observados**: " + mockClients.clients.length + " dispositivos con concesión DHCP activa.\n" +
+          "• **Capacidades verificadas**: Dispositivo, estado, clientes y DMZ.\n\n" +
+          "Para auditoría en vivo con el modelo MiniMax M3 y conexión directa al router, cambia a modo 'Live' en la barra superior.";
+
+        const qLower = question.toLowerCase();
+        if (qLower.includes("quien") || qLower.includes("quién") || qLower.includes("dispositiv") || qLower.includes("conectad") || qLower.includes("aparato")) {
+          mockAnswer = "Equipos observados en la red según la tabla DHCP local:\n\n" +
+            mockClients.clients.map(c => `• **${c.name}** (IP: \`${c.ip}\`, MAC: \`${c.mac}\`, Concesión: ${c.lease})`).join("\n") +
+            "\n\nLímites de la evidencia: Se observan " + mockClients.clients.length + " equipos con concesión DHCP activa.";
+        } else if (qLower.includes("wifi") || qLower.includes("wi-fi") || qLower.includes("expuest") || qLower.includes("segur")) {
+          mockSteps.push({
+            tool: "get_security",
+            path: "/v0/security/wireless",
+            http_status: 503,
+            result: { state: "unavailable", reason: "router-core: endpoint is unverified against captured traffic" }
+          });
+          mockAnswer = "Análisis de exposición de red Wi-Fi (Modo Mock):\n\n" +
+            "• **Seguridad Wi-Fi**: El endpoint de seguridad inalámbrica está en estado `unavailable` (pendiente de verificación contra capturas de tráfico).\n" +
+            "• **WPS**: Está en estado `absent` (HTTP 404), no hay superficie vulnerable de WPS en este firmware.\n" +
+            "• **DMZ**: Está deshabilitado (`false`), ningún equipo interno está expuesto completamente a la WAN.\n\n" +
+            "Recomendación: En modo Live con MiniMax M3 activo, el agente audita estas superficies paso a paso.";
+        }
+
+        setConversations((current) =>
+          current.map((conversation) =>
+            conversation.id === pendingId
+              ? {
+                  ...conversation,
+                  isPending: false,
+                  answer: mockAnswer,
+                  model: "MiniMax M3 (Simulación Mock)",
+                  mode: "mock",
+                  steps: mockSteps
+                }
+              : conversation
+          )
+        );
+        setIsProcessing(false);
+      }, 500);
+      return;
+    }
 
     try {
       const response = await fetch(AGENT_API_URL, {
@@ -97,10 +152,19 @@ export function AiAssistantView() {
   return (
     <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6 text-white font-sans">
       {/* Header section: Brutalist & Tech-forward */}
-      <div className="flex items-center justify-between gap-4 border-b-2 border-neutral-800 pb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b-2 border-neutral-800 pb-4">
         <h1 className="text-xl sm:text-2xl font-black uppercase tracking-tight font-mono text-white flex items-center gap-2">
           <span className="text-primary font-mono font-black">&gt;&gt;</span> ASISTENTE DE RED (MINIMAX M3)
         </h1>
+        <div className="flex items-center gap-2 font-mono text-xs">
+          <span className={`px-2.5 py-1 border font-bold uppercase ${
+            isLive
+              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+              : "border-amber-500/40 bg-amber-500/10 text-amber-400"
+          }`}>
+            {isLive ? "MODO LIVE (CONEXIÓN ACTIVA)" : "MODO MOCK (FIXTURES)"}
+          </span>
+        </div>
       </div>
 
       {/* Input Box: Brutalist */}

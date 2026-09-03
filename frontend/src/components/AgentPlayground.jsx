@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Sparkles, Terminal, Send, CheckCircle2, ArrowRight, ShieldAlert, Cpu } from "lucide-react";
+import { Sparkles, Terminal, Cpu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function AgentPlayground() {

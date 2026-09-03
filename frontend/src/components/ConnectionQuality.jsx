@@ -88,9 +88,6 @@ export function ConnectionQuality() {
           <h2 className="text-xl sm:text-2xl font-black uppercase tracking-tight text-white font-sans">
             Comparativa de Conexión
           </h2>
-          <p className="text-xs text-neutral-400 font-mono mt-0.5">
-            Diagnóstico continuo de respuesta, velocidad y estabilidad en el router
-          </p>
         </div>
 
         <button

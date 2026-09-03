@@ -4,7 +4,7 @@ import {
   ChevronUp
 } from "lucide-react";
 
-export function HelpGuide({ clientCount = 3, isWanConnected = true }) {
+export function HelpGuide() {
   const [openQuestion, setOpenQuestion] = useState(null);
 
   const toggleQuestion = (index) => {
@@ -15,27 +15,27 @@ export function HelpGuide({ clientCount = 3, isWanConnected = true }) {
     {
       icon: "📟",
       title: "¿Qué es el Router exactamente?",
-      answer: "El router es el equipo principal de tu casa: recibe la señal de Internet desde el cable exterior y la distribuye inalámbricamente por Wi-Fi a tus celulares, computadoras y televisores."
+      answer: "El router es el equipo principal de tu casa: recibe la señal de Internet desde el cable exterior y la distribuye a tus celulares, computadoras, televisores y demás dispositivos. También administra la red local, asigna una dirección IP a cada equipo y controla qué tráfico entra o sale. Por eso es el punto central para consultar la conexión y revisar la seguridad de tu hogar."
     },
     {
       icon: "🔢",
       title: "¿Qué es la Dirección IP (ej. 192.168.1.1)?",
-      answer: "La dirección IP funciona como el número de puerta o teléfono de cada equipo en tu hogar. Permite que el router identifique qué teléfono o computadora solicitó cada página o video sin confusiones."
+      answer: "La dirección IP funciona como el número de puerta o teléfono de cada equipo en tu hogar. Permite que el router identifique qué teléfono o computadora solicitó cada página o video sin confusiones. La dirección 192.168.1.1 suele ser la dirección privada del propio router: solo se utiliza dentro de tu red y no identifica públicamente tu casa en Internet. Cada dispositivo conectado recibe otra dirección privada diferente."
     },
     {
       icon: "💾",
       title: "¿Qué es el Firmware?",
-      answer: "El firmware es el software interno del router que gestiona su funcionamiento básico y seguridad. Mientras opere de forma estable y sin errores, no requiere intervención manual."
+      answer: "El firmware es el software interno del router que gestiona su funcionamiento básico, la red Wi-Fi, las conexiones y parte de la seguridad. Es parecido al sistema operativo del equipo. Una versión antigua puede seguir funcionando, pero conviene revisar si el fabricante publicó actualizaciones y evitar exponer la administración del router a Internet. No instales firmware sin confirmar que corresponde exactamente a tu modelo y revisión de hardware."
     },
     {
       icon: "📶",
       title: "¿Cuál es la diferencia entre Wi-Fi y Cable Ethernet?",
-      answer: "El Wi-Fi transmite datos por el aire para mayor comodidad y movilidad. El cable Ethernet conecta directamente el equipo al router, proporcionando la máxima estabilidad y menor latencia posible."
+      answer: "El Wi-Fi transmite datos por el aire y permite moverse por la casa, aunque la distancia, las paredes y otras redes pueden reducir su velocidad o estabilidad. El cable Ethernet conecta directamente el equipo al router y normalmente ofrece menor latencia, menos interferencias y una conexión más constante. Para videollamadas, juegos o transferencias grandes, el cable suele ser la opción más estable."
     },
     {
       icon: "💡",
       title: "¿Qué hacer si la conexión se interrumpe?",
-      answer: "La solución más efectiva es reiniciar el router: desconéctalo de la corriente eléctrica, espera 15 segundos y vuelve a conectarlo. En aproximadamente dos minutos el servicio se restablecerá automáticamente."
+      answer: "Primero comprueba si el problema afecta a todos los dispositivos o solo a uno. Revisa que los cables y las luces del router estén conectados correctamente; después, desconéctalo de la corriente, espera 15 segundos y vuelve a conectarlo. El servicio suele restablecerse en aproximadamente dos minutos. Si el problema continúa, consulta el estado WAN, prueba con otro cable y contacta a tu proveedor. No pulses el botón de restablecimiento de fábrica: borra la configuración."
     }
   ];
 
@@ -52,16 +52,6 @@ export function HelpGuide({ clientCount = 3, isWanConnected = true }) {
           <p className="text-xs text-neutral-400 font-mono mt-0.5">
             Conceptos clave explicados sin rodeos para entender el estado de tu conexión.
           </p>
-        </div>
-
-        {/* Quick summary status */}
-        <div className="flex items-center gap-2 text-xs font-mono">
-          <span className={`h-2 w-2 rounded-full ${isWanConnected ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`} />
-          <span className="text-neutral-300 font-bold uppercase">
-            {isWanConnected ? "SERVICIO ESTABLE" : "SIN CONEXIÓN"}
-          </span>
-          <span className="text-neutral-600">|</span>
-          <span className="text-neutral-400 font-bold">{clientCount} EQUIPOS</span>
         </div>
       </div>
 

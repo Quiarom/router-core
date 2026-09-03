@@ -138,13 +138,10 @@ export function DeviceManager({ clients = [], state: _state = "verified" }) {
             <h2 className="text-xl sm:text-2xl font-black uppercase tracking-tight text-white font-sans">
               Aparatos en tu Casa
             </h2>
-            <span className="font-mono text-xs text-neutral-400 bg-neutral-900 border border-neutral-800 px-3 py-1 font-bold uppercase">
-              {clients.length} DETECTADOS
+            <span className="font-mono text-xs font-bold text-primary bg-primary/10 border border-primary/30 px-2 py-0.5">
+              {clients.length}
             </span>
           </div>
-          <p className="text-xs text-neutral-400 font-mono mt-0.5">
-            Dispositivos conectados por Wi-Fi o cable a tu router. Haz clic para renombrarlos.
-          </p>
         </div>
 
         {/* Filter segment */}
