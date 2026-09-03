@@ -15,18 +15,17 @@
 package cmd
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 	"github.com/zalando/go-keyring"
+	"golang.org/x/term"
 )
 
 const (
@@ -96,27 +95,12 @@ func runSetup(stdout, stderr io.Writer, apiKeyStdin bool) error {
 	out.println("")
 
 	// 1. Read the API key.
-	var key string
-	if apiKeyStdin {
-		b, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return fmt.Errorf("read stdin: %w", err)
-		}
-		key = strings.TrimSpace(string(b))
-		if key == "" {
-			return errors.New("stdin was empty; provide a non-empty API key")
-		}
-	} else {
-		out.println("AI")
-		out.println("  Provider    GMI Cloud")
-		out.println("  Model       " + defaultConfig().Model)
-		out.println("")
-		out.println("GMI Cloud API key:")
-		out.println("(input is hidden; press Enter when done)")
-		key = readHiddenLine()
-		if key == "" {
-			return errors.New("no API key provided; rerun when ready")
-		}
+	key, err := readAPIKey(stdout, stderr, apiKeyStdin)
+	if err != nil {
+		return err
+	}
+	if key == "" {
+		return errors.New("no API key provided; rerun when ready")
 	}
 
 	// 2. Store the key. Prefer the OS credential store; explain
@@ -133,7 +117,7 @@ func runSetup(stdout, stderr io.Writer, apiKeyStdin bool) error {
 		out.println("so the variable is set in every new terminal.")
 	} else {
 		out.println("")
-		out.println("\u2713 Saved securely to the OS credential store")
+		out.println("✓ Saved securely to the OS credential store")
 		out.println("  service: " + keyringService)
 		out.println("  account: " + keyringAccount)
 	}
@@ -145,7 +129,7 @@ func runSetup(stdout, stderr io.Writer, apiKeyStdin bool) error {
 		return fmt.Errorf("write config: %w", err)
 	}
 	out.println("")
-	out.println("\u2713 Wrote non-secret config to " + cfgPath)
+	out.println("✓ Wrote non-secret config to " + cfgPath)
 
 	// 4. Final summary.
 	out.println("")
@@ -156,21 +140,50 @@ func runSetup(stdout, stderr io.Writer, apiKeyStdin bool) error {
 	return nil
 }
 
-func readHiddenLine() string {
-	// Use the standard stty-based prompt for hidden input.
-	// Falls back to a plain read if stty is not available.
-	cmd := exec.Command("stty", "-echo")
-	cmd.Stdin = os.Stdin
-	_ = cmd.Run() // ignore error; some environments lack stty
-	defer func() {
-		cmd2 := exec.Command("stty", "echo")
-		cmd2.Stdin = os.Stdin
-		_ = cmd2.Run()
-	}()
+// readAPIKey returns the API key from stdin, the TTY, or
+// surfaces a clear error explaining how to provide one.
+func readAPIKey(stdout, stderr io.Writer, apiKeyStdin bool) (string, error) {
+	if apiKeyStdin {
+		b, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return "", fmt.Errorf("read stdin: %w", err)
+		}
+		key := strings.TrimSpace(string(b))
+		if key == "" {
+			return "", errors.New("stdin was empty; provide a non-empty API key")
+		}
+		return key, nil
+	}
 
-	rd := bufio.NewReader(os.Stdin)
-	line, _ := rd.ReadString('\n')
-	return strings.TrimSpace(line)
+	// Interactive path: we need a real TTY. We try /dev/tty
+	// directly so the user can run `gvt ask` (which has a
+	// non-TTY stdin) and still set up the key interactively.
+	tty, err := os.Open("/dev/tty")
+	if err != nil {
+		// Surface a single, clear, actionable error. Do not
+		// fall back to a plain stdin read: that would print
+		// the typed characters back to the terminal, which is
+		// the bug this fix replaces.
+		return "", errors.New(
+			"no interactive TTY available. " +
+				"Use --api-key-stdin to read the key from a pipe: " +
+				"printf 'YOUR_KEY' | gvt setup --api-key-stdin",
+		)
+	}
+	defer tty.Close()
+
+	fmt.Fprintln(stderr, "AI")
+	fmt.Fprintln(stderr, "  Provider    GMI Cloud")
+	fmt.Fprintln(stderr, "  Model       "+defaultConfig().Model)
+	fmt.Fprintln(stderr, "")
+	fmt.Fprintln(stderr, "GMI Cloud API key:")
+	fmt.Fprintln(stderr, "(input is hidden; press Enter when done)")
+	pw, err := term.ReadPassword(int(tty.Fd()))
+	if err != nil {
+		return "", fmt.Errorf("read password from TTY: %w", err)
+	}
+	fmt.Fprintln(stderr, "")
+	return strings.TrimSpace(string(pw)), nil
 }
 
 func writeConfig(cfg configFile) (string, error) {
