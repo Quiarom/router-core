@@ -170,24 +170,24 @@ Rel.63227n.
 The full evidence trail (auth recipe, capability matrix,
 end-to-end traces for both M3 and M2.7 against the live unit)
 is committed in
-[`docs/protocol/evidence.md`](docs/protocol/evidence.md) and
+[`docs/EVIDENCE_TRACE.md`](docs/EVIDENCE_TRACE.md) and
 [`fixtures/`](fixtures/).
 
 ---
 
 ## Documentation
 
-- [Quickstart](docs/QUICKSTART.md) — 5-minute setup with mock and
+- [Quickstart](docs/EVIDENCE_TRACE.md) — 5-minute setup with mock and
   real router paths.
-- [Architecture](docs/ARCHITECTURE.md) — three-layer design, the
+- [Architecture](docs/STATUS.md) — three-layer design, the
   safety boundary, how the adapter contract works.
-- [API reference](docs/API.md) — every endpoint, every state,
+- [API reference](docs/FRONTEND_CONTRACT.md) — every endpoint, every state,
   every status code.
-- [Agent](docs/AGENT.md) — how the reasoning layer calls the
+- [Agent](docs/PHASE5_AGENT_RUN.md) — how the reasoning layer calls the
   runtime, tool definition, prompt structure.
 - [Adapter development](docs/adapters/tplink-wr841n.md) — how to
   add a new vendor adapter.
-- [Evidence](docs/protocol/evidence.md) — physical capture
+- [Evidence](docs/EVIDENCE_TRACE.md) — physical capture
   trail, prior-art comparison, security recipe divergence.
 - [Demo](docs/demo/) — reproducible end-to-end script.
 - [Architecture decision records](docs/adr/) — every AD the
