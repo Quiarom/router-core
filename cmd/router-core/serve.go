@@ -245,11 +245,11 @@ func handleCapabilities(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
 				"status":            "verified",
 				"clients":           "verified",
 				"wireless_security": "verified",
-				"wps":               "absent",
-				"dmz":               "verified",
-				"upnp":              "absent",
-				"remote_management": "absent",
-				"forwarding":        "verified",
+				"wps":               "unsupported_or_unverified",
+				"dmz":               "unsupported_or_unverified",
+				"upnp":              "unsupported_or_unverified",
+				"remote_management": "unsupported_or_unverified",
+				"forwarding":        "unsupported_or_unverified",
 			},
 		}
 		writeJSON(w, http.StatusOK, caps)
