@@ -244,7 +244,7 @@ func handleCapabilities(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
 				"device":            "verified",
 				"status":            "verified",
 				"clients":           "verified",
-				"wireless_security": "verified",
+				"wireless_security": "unavailable",
 				"wps":               "unsupported_or_unverified",
 				"dmz":               "unsupported_or_unverified",
 				"upnp":              "unsupported_or_unverified",

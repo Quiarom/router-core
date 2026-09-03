@@ -132,6 +132,48 @@ func TestServe_Device(t *testing.T) {
 	}
 }
 
+func TestServe_CapabilitiesReflectVerification(t *testing.T) {
+	srv := newWR841NForServe(t, "admin", "hunter2")
+	host := strings.TrimPrefix(srv.server.URL, "http://")
+	a := tplinkwr841v8.New(host, transport.WithTimeout(2*time.Second))
+	if err := a.Login(context.Background(), "admin", "hunter2"); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	addr, teardown := runServeWithAdapter(t, a)
+	defer teardown()
+
+	resp, err := http.Get(addr + "/v0/capabilities")
+	if err != nil {
+		t.Fatalf("GET /v0/capabilities: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d want 200", resp.StatusCode)
+	}
+
+	var body struct {
+		Capabilities map[string]string `json:"capabilities"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for capability, want := range map[string]string{
+		"device":            "verified",
+		"status":            "verified",
+		"clients":           "verified",
+		"wireless_security": "unavailable",
+		"wps":               "unsupported_or_unverified",
+		"dmz":               "unsupported_or_unverified",
+		"upnp":              "unsupported_or_unverified",
+		"remote_management": "unsupported_or_unverified",
+		"forwarding":        "unsupported_or_unverified",
+	} {
+		if got := body.Capabilities[capability]; got != want {
+			t.Errorf("%s: got %q want %q", capability, got, want)
+		}
+	}
+}
+
 func TestServe_Status(t *testing.T) {
 	srv := newWR841NForServe(t, "admin", "hunter2")
 	host := strings.TrimPrefix(srv.server.URL, "http://")

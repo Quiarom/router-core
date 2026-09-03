@@ -263,6 +263,11 @@ export OPENROUTER_API_KEY="sk-or-v1-..."
     --model minimax/minimax-m2.7:free
 ```
 
+For Fedora, the desktop build and runtime instructions are in
+[`docs/DESKTOP.md`](docs/DESKTOP.md). The desktop application currently
+supports the verified TP-Link WR841N v8.4 adapter; unknown router families
+are rejected instead of receiving simulated data.
+
 ## Quick reference
 
 | Command | Purpose |
@@ -288,19 +293,29 @@ go test ./internal -run TestSourceContainsNoMutatingHTTPCalls
 # live CLI verified on 192.168.1.1 with admin/admin
 ```
 
+The Fedora desktop checks are:
+
+```sh
+cd frontend
+npm run build
+npm run lint
+npm test
+cargo check --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml
+```
+
 ## Known limitations
 
 - `/v0/security/wireless` returns `503 unavailable` (parser is
   still a placeholder). The endpoint is reachable on v8.4 (verified
   2026-08-31) but the live parser is pending.
-- The v8.4 firmware at the lab unit returns HTTP 501 for WPS,
-  UPnP, and Remote Management. These are correctly reported
-  as `absent` in the capability matrix. The runtime does not
-  pretend the surface is there.
-- DMZ and Forwarding are also 501 on this firmware. The
-  capability matrix currently lists them as `verified`; that
-  is a small inconsistency the live trace reveals and is on the
-  to-fix list.
+- The runtime has not enabled WPS, UPnP, Remote Management, DMZ,
+  or Forwarding because their endpoint recipes are not verified in
+  the adapter registry. The capability matrix reports them as
+  `unsupported_or_unverified`.
+- The wireless endpoint is reachable on the verified firmware, but its
+  parser is still pending, so the capability matrix reports it as
+  `unavailable` until the observation is normalized.
 
 ## Roadmap
 
@@ -313,15 +328,13 @@ go test ./internal -run TestSourceContainsNoMutatingHTTPCalls
   `/LoginRpm.htm?Save=Save` and forwards it to
   `authedFetchWithFallback`.
 - **Wire the wireless-security parser.** The endpoint is
-  reachable (verified 2026-08-31) but the runtime currently
+  reachable (verified 2026-08-31), but the runtime currently
   returns 503 with a clear reason.
-- **Frontend reference implementation.** A React dashboard
-  under `frontend/` (in progress by a third-party contributor)
-  that talks to `serve` and to a MiniMax model through
-  OpenRouter.
-- **More adapters.** The vendor-neutral `RouterAdapter`
-  contract is ready for an ASUS, MikroTik, or Ubiquiti
-  implementation.
+- **Frontend and desktop application.** The React dashboard under
+  `frontend/` talks to `serve` and the agent. Tauri packages it for Fedora
+  and keeps credentials in memory.
+- **More adapters.** The vendor-neutral `RouterAdapter` contract is ready
+  for an ASUS, MikroTik, Ubiquiti, or other verified implementation.
 
 ## Attribution
 

@@ -41,15 +41,19 @@ There are **three layers**:
    weird `var name = new Array(...)` JavaScript blocks the firmware
    emits in its HTML.
 
-Plus **two binaries** (commands you can actually run):
+Plus **four binaries** (commands you can actually run):
 
-- `router-core` — the runtime CLI. Tells you what the router is
-  doing. Currently returns `ErrCaptureMissing` because the adapter
-  hasn't been wired to live authentication yet.
+- `router-core` — the runtime CLI. Authenticates against the verified
+  TP-Link adapter and exposes the read-only API on loopback.
 - `router-core-learn` — the experimental probe. Authenticates against
   the physical router using five candidate recipes, captures
   sanitized evidence, and writes it to `fixtures/captured/`. This is
   what produced the Phase 2 evidence.
+- `router-core-agent` — the reasoning layer. It consumes local
+  observations and answers questions in deterministic or OpenRouter mode.
+- `router-core-desktop` — the Fedora desktop shell. It starts the other
+  services after the operator submits credentials and keeps the session
+  in memory.
 
 ## Hardcoded values (no secrets stored)
 
@@ -130,10 +134,11 @@ The full per-capability matrix is persisted at
 `fixtures/captured/tplink-wr841n-v8/capability-evidence.json` after
 each `observe` run.
 
-All other endpoints (none) remain **unverified** — every entry in the
-matrix is now either `verified` (5), `unsupported_or_unverified` (3),
-or `mismatch` (0). `endpoints.go` still has the original
-`Verified: false` flags; flipping them is Phase 3+ work.
+The runtime registry marks `status`, DHCP clients, and wireless security
+as verified endpoints. The wireless parser still returns unavailable, and
+DMZ, WPS, UPnP, Remote Management, and Forwarding remain blocked until their
+recipes and parsers are verified. The desktop therefore reports unknown
+families and unverified capabilities without substituting fixture data.
 
 The verification is encoded in three layers:
 
@@ -155,8 +160,10 @@ The verification is encoded in three layers:
 - **No live router integration tests** beyond an opt-in `TestLiveOptIn`
   that runs only when `ROUTER_LIVE_TESTS=1` is set. Default behavior
   is fixture-based or httptest-mock-based.
-- **No AI model integration.** The reasoning layer that would consume
-  the `domain` types and propose remediations is Phase 5 work.
+- **No universal adapter.** The desktop flow currently accepts the
+  verified TP-Link WR841N v8.4 adapter. Other router families remain
+  unsupported until their authentication and observation recipes are
+  captured and tested.
 - **No mutation surface.** The adapter cannot change settings, reboot,
   reset, or write anything to the router. This is enforced by the
   architecture test in `internal/architecture_test.go` (which would
@@ -189,6 +196,15 @@ go test ./... -count=1 -race
 
 Eight packages, all green.
 
+For Fedora, build the desktop RPM with:
+
+```bash
+make desktop-build
+```
+
+The package is written under
+`frontend/src-tauri/target/release/bundle/rpm/`.
+
 ## Where we're going
 
 The hackathon scope is "Reasoning" — we want an AI agent to be able
@@ -204,25 +220,23 @@ sanitized answer back. Phase-by-phase:
 - **Phase 3 — Verified Driver:** **done** (the minimal change: the
   adapter now uses the verified recipe; `OpStatus` is `Verified: true`;
   ADR 0005 documents the evidence).
-- **Phase 4 — Local Service:** not started. Would add a
-  `router-core serve` binary that keeps the authenticated session
-  alive in memory and exposes a typed HTTP API on `127.0.0.1`. This
-  is the seam where the AI agent plugs in.
-- **Phase 5 — M3 Agent Loop:** not started. The AI agent (the
-  reasoning layer that the hackathon judges on) calls Phase 4's
-  HTTP API to ask "what's the router doing?" and reasons about the
-  answer.
-- **Phase 6 — One Safe Write:** not started. Would add the first
-  mutation (e.g. disabling UPnP) gated by policy + human approval.
-- **Phase 7 — UI / Demo:** not started. Final wrap-up.
+- **Phase 4 — Local Service:** done. `router-core serve` keeps the
+  authenticated session in memory and exposes a typed HTTP API on
+  `127.0.0.1`.
+- **Phase 5 — M3 Agent Loop:** done. The agent calls Phase 4's API,
+  records observation steps, and runs in deterministic or OpenRouter
+  mode.
+- **Phase 6 — One Safe Write:** not started. Any mutation would require
+  a new safety decision and explicit human approval.
+- **Phase 7 — UI / Demo:** in progress. The Fedora Tauri desktop app
+  provides the connection flow and dashboard; broader adapter support
+  remains pending.
 
-The **biggest unverified surface** is the rest of the endpoints
-(DHCP, WPS, DMZ, UPnP, Remote Management, Forwarding). Each one needs
-its own physical capture pass. Until they are captured and verified,
-the adapter cannot read them at runtime — the `Verified: false` flag
-in `endpoints.go` blocks the request. This is intentional: the runtime
-adapter must never guess a recipe; it must only ever use recipes that
-have been physically verified.
+The **biggest unverified surface** is WPS, DMZ, UPnP, Remote Management,
+and Forwarding. Each one needs its own physical capture pass and parser
+verification. Until then, the `Verified: false` flag in `endpoints.go`
+blocks the request. This is intentional: the runtime adapter must never
+guess a recipe; it must only use recipes that have been physically verified.
 
 ## License and attribution
 
