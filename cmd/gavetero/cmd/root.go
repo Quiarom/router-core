@@ -39,8 +39,8 @@ The runtime is read-only: it never changes the router. The
 model decides what to inspect; the local runtime decides which
 operations exist. Unknown is reported as unknown, never as
 false.`,
-		Version:      version,
-		SilenceUsage: true,
+		Version:       version,
+		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
 	root.SetVersionTemplate("gavetero {{.Version}}\n")

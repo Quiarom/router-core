@@ -5,11 +5,12 @@
 // commands that the end user actually runs.
 //
 // Subcommands:
-//   setup     store the GMI Cloud API key once, securely
-//   ask       investigate a network question with MiniMax M3
-//   inspect   show the current router observations
-//   doctor    run 6 checks; report which surface is ready
-//   version   print the version
+//
+//	setup     store the GMI Cloud API key once, securely
+//	ask       investigate a network question with MiniMax M3
+//	inspect   show the current router observations
+//	doctor    run 6 checks; report which surface is ready
+//	version   print the version
 //
 // This is a thin orchestrator. It does not reimplement the
 // runtime, the agent, or the lab. It calls those binaries with
