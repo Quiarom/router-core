@@ -390,3 +390,35 @@ var _ = strings.TrimSpace
 var netListenLoopback = func(addr string) (net.Listener, error) {
 	return nil, fmt.Errorf("netListenLoopback not bound (build tag issue?)")
 }
+
+// findRouterCoreAgentBin locates the router-core-agent binary,
+// following the same precedence as findRouterCoreBin:
+//  1. ROUTER_CORE_AGENT_BIN env var
+//  2. same directory as the running executable
+//  3. $PATH
+func findRouterCoreAgentBin() (string, error) {
+	if env := os.Getenv("ROUTER_CORE_AGENT_BIN"); env != "" {
+		if _, err := os.Stat(env); err == nil {
+			return env, nil
+		}
+	}
+	if exe, err := os.Executable(); err == nil {
+		candidate := filepath.Join(filepath.Dir(exe), "router-core-agent")
+		if _, statErr := os.Stat(candidate); statErr == nil {
+			return candidate, nil
+		}
+	}
+	if path, err := exec.LookPath("router-core-agent"); err == nil {
+		return path, nil
+	}
+	return "", fmt.Errorf(`router-core-agent binary not found.
+
+gavetero ask spawns router-core-agent as the reasoning sidecar.
+Build it once with:
+
+  make build
+
+and either keep both binaries in the same directory, or set:
+
+  export ROUTER_CORE_AGENT_BIN=/path/to/router-core-agent`)
+}
