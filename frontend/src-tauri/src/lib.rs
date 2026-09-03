@@ -159,16 +159,30 @@ fn validate_device(response: &LocalResponse) -> Result<(), String> {
         .get("authenticated")
         .and_then(Value::as_str)
         .is_some_and(|value| value == "true");
+    let vendor = response
+        .data
+        .get("vendor")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value == "TP-Link");
+    let model = response
+        .data
+        .get("model")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value == "TL-WR841N/ND");
+    let hardware = response
+        .data
+        .pointer("/hardwareVersion/value")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty());
     let firmware = response
         .data
         .pointer("/firmwareVersion/value")
         .and_then(Value::as_str)
         .is_some_and(|value| !value.trim().is_empty());
 
-    if response.status != 200 || !authenticated || !firmware {
+    if response.status != 200 || !authenticated || !vendor || !model || !hardware || !firmware {
         return Err(
-            "El router respondió, pero su firmware todavía no tiene un adaptador verificado"
-                .to_string(),
+            "El router respondió, pero no coincide con el adaptador TP-Link verificado".to_string(),
         );
     }
     Ok(())
@@ -460,6 +474,9 @@ mod tests {
             status: 200,
             data: json!({
                 "authenticated": "unknown",
+                "vendor": "TP-Link",
+                "model": "TL-WR841N/ND",
+                "hardwareVersion": {"value": "hardware"},
                 "firmwareVersion": {"value": ""}
             }),
         };
@@ -472,10 +489,28 @@ mod tests {
             status: 200,
             data: json!({
                 "authenticated": "true",
+                "vendor": "TP-Link",
+                "model": "TL-WR841N/ND",
+                "hardwareVersion": {"value": "hardware"},
                 "firmwareVersion": {"value": "firmware"}
             }),
         };
         assert!(validate_device(&response).is_ok());
+    }
+
+    #[test]
+    fn validate_device_rejects_unknown_model() {
+        let response = LocalResponse {
+            status: 200,
+            data: json!({
+                "authenticated": "true",
+                "vendor": "Sercomm",
+                "model": "IP3442M-L/US",
+                "hardwareVersion": {"value": "hardware"},
+                "firmwareVersion": {"value": "firmware"}
+            }),
+        };
+        assert!(validate_device(&response).is_err());
     }
 }
 
