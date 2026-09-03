@@ -140,19 +140,38 @@ func runInspect(stdout, stderr io.Writer, output string) error {
 	}
 }
 
+// findRouterCoreBin locates the router-core binary by looking at
+// (in order):
+//   1. ROUTER_CORE_BIN environment variable (CI, packaging)
+//   2. the same directory as the running gavetero executable
+//   3. $PATH
+// After `make install-user` the router-core sidecar sits in the
+// same install dir as gavetero, so case 2 is the common path.
 func findRouterCoreBin() (string, error) {
-	exe, err := os.Executable()
-	if err == nil {
+	if env := os.Getenv("ROUTER_CORE_BIN"); env != "" {
+		if _, err := os.Stat(env); err == nil {
+			return env, nil
+		}
+	}
+	if exe, err := os.Executable(); err == nil {
 		candidate := filepath.Join(filepath.Dir(exe), "router-core")
 		if _, statErr := os.Stat(candidate); statErr == nil {
 			return candidate, nil
 		}
 	}
-	path, err := exec.LookPath("router-core")
-	if err == nil {
+	if path, err := exec.LookPath("router-core"); err == nil {
 		return path, nil
 	}
-	return "", fmt.Errorf("router-core binary not found next to gavetero or in $PATH; build it with: go build -o bin/router-core ./cmd/router-core")
+	return "", fmt.Errorf(`router-core binary not found.
+
+Gavetero needs router-core to expose router observations.
+Build it once with:
+
+  make build
+
+and either keep both binaries in the same directory, or set:
+
+  export ROUTER_CORE_BIN=/path/to/router-core`)
 }
 
 func reserveLoopbackAddr() (string, error) {
