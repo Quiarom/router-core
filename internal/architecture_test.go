@@ -12,9 +12,13 @@ import (
 // router runtime paths may issue a POST/PUT/DELETE.
 //
 // Scope: cmd/router-core/, cmd/router-core-learn/, internal/.
-// Excluded: cmd/router-core-agent/ (the Phase 5 reasoning layer
-// POSTs to OpenRouter, not to the router; the router is reached
-// only via the typed /v0/ HTTP surface).
+// Excluded:
+//   - cmd/router-core-agent/ (the reasoning layer POSTs to
+//     the LLM provider, not to the router; the router is
+//     reached only via the typed /v0/ HTTP surface).
+//   - cmd/gavetero/cmd/ (the user-facing orchestrator; POSTs
+//     to its own local sidecars on the loopback interface, never
+//     to the router).
 func TestSourceContainsNoMutatingHTTPCalls(t *testing.T) {
 	root := repoRoot(t)
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
@@ -30,6 +34,9 @@ func TestSourceContainsNoMutatingHTTPCalls(t *testing.T) {
 			// provider; the runtime is not allowed to POST to
 			// the router. Keep the invariant scoped.
 			if pathContainsSegment(path, "cmd", "router-core-agent") {
+				return filepath.SkipDir
+			}
+			if pathContainsSegment(path, "cmd", "gavetero") {
 				return filepath.SkipDir
 			}
 			return nil
