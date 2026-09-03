@@ -52,6 +52,11 @@ type agentResult struct {
 	Model  string            `json:"model"`
 	Mode   string            `json:"mode"`
 	Steps  []observationStep `json:"steps"`
+	// Events is the additive structured trace introduced in
+	// commit 8. It records tool_call, observation, and
+	// completed moments. The frontend can render a vertical
+	// timeline from this slice without parsing free-form text.
+	Events []Event `json:"events,omitempty"`
 }
 
 type errorResponse struct {
@@ -535,6 +540,7 @@ func runLiveOnce(ctx context.Context, opts options, routerClient *routerCoreClie
 		{Role: "system", Content: buildSystemPrompt()},
 		{Role: "user", Content: question},
 	}
+	events := []Event{}
 	modelClient := &http.Client{Timeout: opts.timeout}
 
 	for range 8 {
@@ -591,10 +597,12 @@ func runLiveOnce(ctx context.Context, opts options, routerClient *routerCoreClie
 			if answer == "" {
 				return agentResult{}, errors.New("MiniMax devolvió una respuesta vacía")
 			}
-			return agentResult{Answer: answer, Model: model, Mode: "live", Steps: steps}, nil
+			events = append(events, NewCompletedEvent())
+			return agentResult{Answer: answer, Model: model, Mode: "live", Steps: steps, Events: events}, nil
 		}
 
 		for _, call := range assistantMessage.ToolCalls {
+			events = append(events, NewToolCallEvent(call.Function.Name))
 			path, err := resolveToolPath(call.Function.Name)
 			if err != nil {
 				return agentResult{}, err
@@ -605,6 +613,11 @@ func runLiveOnce(ctx context.Context, opts options, routerClient *routerCoreClie
 			}
 			steps = append(steps, stepFromObservation(call.Function.Name, observed))
 			logf("%s -> HTTP %d", call.Function.Name, observed.Status)
+			events = append(events, NewObservationEvent(
+				call.Function.Name, path, observed.Status,
+				stateFromHTTPAndBody(observed.Status, observed.Body),
+				noteFromHTTPAndBody(call.Function.Name, observed.Status, observed.Body),
+			))
 			history = append(history, message{
 				Role:       "tool",
 				ToolCallID: call.ID,
@@ -649,4 +662,49 @@ func runStub(ctx context.Context, routerClient *routerCoreClient, model, questio
 		"La API de MiniMax no está configurada, así que no debo elaborar una conclusión inteligente ni inventar datos. " +
 		"Configura OPENROUTER_API_KEY y vuelve a consultar para obtener el análisis de MiniMax M3."
 	return agentResult{Answer: answer, Model: model, Mode: "stub", Steps: steps}, nil
+}
+
+// stateFromHTTPAndBody returns one of the four knowledge states
+// for an observation. It is best-effort: the runtime has a
+// canonical response shape on the happy path, and a JSON body
+// with a "state" field for the unhappy path.
+func stateFromHTTPAndBody(httpStatus int, body json.RawMessage) string {
+	if httpStatus == 200 {
+		// The runtime returns a typed observation. Look for a
+		// "state" field; default to "verified" if absent.
+		var m map[string]any
+		if err := json.Unmarshal(body, &m); err == nil {
+			if s, ok := m["state"].(string); ok && s != "" {
+				return s
+			}
+		}
+		return "verified"
+	}
+	if httpStatus == 404 {
+		return "unsupported_or_unverified"
+	}
+	if httpStatus >= 500 {
+		return "unavailable"
+	}
+	return "unavailable"
+}
+
+// noteFromHTTPAndBody returns a short factual sentence describing
+// what was or was not learned. It deliberately does not interpret
+// the result or give advice; the model does that in the final
+// answer.
+func noteFromHTTPAndBody(tool string, httpStatus int, body json.RawMessage) string {
+	switch httpStatus {
+	case 200:
+		return tool + " returned a typed observation"
+	case 404:
+		return tool + " is not supported by this adapter on this firmware"
+	case 401, 403:
+		return tool + " requires authentication"
+	default:
+		if httpStatus >= 500 {
+			return tool + " transport failure"
+		}
+		return tool + " returned an unexpected response"
+	}
 }
