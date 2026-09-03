@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import { 
   ShieldCheck, 
-  Terminal, 
   Cpu, 
   Lock, 
   Radio, 
@@ -15,8 +14,7 @@ import {
   Check
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { mockDevice, mockStatus, mockClients, mockCapabilities, mockSecurity } from "@/data/mockData";
 
 export function LandingPage({ onOpenDashboard }) {
