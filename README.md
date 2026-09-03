@@ -1,16 +1,14 @@
 # router-core
 
-> **Local-first control plane for legacy consumer routers.**
-
-Give an aging router dashboard a typed local API and an
-evidence-aware AI agent — without replacing the firmware.
-
-[![CI](https://github.com/Quiarom/router-core/actions/workflows/ci.yml/badge.svg)](.github/workflows/ci.yml)
-[![Go 1.25+](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](go.mod)
+[![CI](https://github.com/Quiarom/router-core/actions/workflows/ci.yml/badge.svg)](https://github.com/Quiarom/router-core/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/Quiarom/router-core.svg)](https://pkg.go.dev/github.com/Quiarom/router-core)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Quiarom/router-core)](https://goreportcard.com/report/github.com/Quiarom/router-core)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![GMI Cloud × MiniMax Week](https://img.shields.io/badge/GMI_Cloud-MiniMax_Week-2026-08-24_→_2026-09-06-blue)](https://www.gmicloud.ai/minimax-week)
 
-A real run against the lab unit (192.168.1.1, admin/admin):
+**Ask your old router a question in plain language and get an answer
+backed by evidence.** router-core reads a legacy TP-Link admin page,
+exposes it as a typed JSON API on localhost, and lets a MiniMax agent
+reason about it. It never writes to the router.
 
 ```text
 router-core-agent: pregunta="Is my Wi-Fi exposed?"
@@ -30,206 +28,258 @@ Recomendaciones
 - Mantener WPS desactivado (ya lo está).
 ```
 
-[Demo video] · [Documentation](docs/) · [MiniMax-Week submission](docs/hackathon/minimax-week-2026.md)
+That is a real run against the lab unit (192.168.1.1). The agent answers
+in Spanish by design; the question can be in either language. The full
+trace is in [`fixtures/agent-traces/`](fixtures/agent-traces/).
 
----
+## Try it in 60 seconds
 
-## Quickstart
-
-Try it without hardware, in under a minute:
+No router, no API key, no network:
 
 ```sh
-git clone https://github.com/Quiarom/router-core
-cd router-core
-go build -o ./bin/router-core ./cmd/router-core
+git clone https://github.com/Quiarom/router-core && cd router-core
+make build
+
 ./bin/router-core probe --fixtures fixtures/synthetic/tplink-wr841n-v8
+./bin/router-core serve --mock &
+./bin/router-core-agent --dry-run --question "Is my Wi-Fi exposed?"
 ```
 
-You get the device identity, firmware fingerprint, and
-authentication state parsed from a sanitized fixture — no
-network, no router, no admin password.
+`probe` prints the device identity, firmware fingerprint and auth state
+parsed from a sanitized fixture. `serve --mock` exposes the same JSON API
+the live mode does, backed by fixtures. `--dry-run` runs the offline
+stub agent against it: it reads the observations and prints a demo
+answer without calling a model, so the whole loop is exercised end to
+end.
 
-Then against a real TP-Link WR841N v8.4 (firmware 3.15.9):
+To get the dashboard too, `make dev` starts all three (API on :8484,
+agent on :8585, Vite on :5173). You can also install the binaries
+without cloning:
 
 ```sh
-export GMI_SERVING_API_KEY="<jwt-key>"   # GMI Cloud Inference Engine
-./bin/router-core serve --host 192.168.1.1 --addr 127.0.0.1:8484 &
-./bin/router-core-agent \
+go install github.com/Quiarom/router-core/cmd/router-core@latest
+go install github.com/Quiarom/router-core/cmd/router-core-agent@latest
+```
+
+## Against a real router
+
+Works today with a TP-Link TL-WR841N/ND v8.4 (firmware 3.15.9).
+
+```sh
+export GMI_SERVING_API_KEY="<jwt-key>"        # GMI Cloud Inference Engine
+router-core serve --host 192.168.1.1 --addr 127.0.0.1:8484 &
+router-core-agent \
     --router-core-url http://127.0.0.1:8484 \
     --question "Is my Wi-Fi exposed?" \
     --model MiniMaxAI/MiniMax-M3
 ```
 
-Or run the whole demo with one command:
+`serve` reads the admin password from stdin (30 s timeout), keeps it in
+memory only, and zeros it on exit. Nothing is written to disk. Note that
+the current reader does not disable terminal echo; see
+[Troubleshooting](#troubleshooting).
+
+## Usage
 
 ```sh
-./docs/demo/run-demo.sh
+router-core probe   --host 192.168.1.1          # identity + firmware + auth state
+router-core inspect --host 192.168.1.1 --json   # full observation as JSON
+router-core probe   --fixtures <dir>            # same, replayed from a fixture
+router-core serve   --host 192.168.1.1          # JSON API on 127.0.0.1:8484
+router-core serve   --mock                      # same API, fixture-backed
+
+router-core-agent --question "..."              # one question, answer on stdout
+router-core-agent --question -                  # read the question from stdin
+router-core-agent --serve 127.0.0.1:8585        # HTTP mode: POST /v0/chat, GET /healthz
+router-core-agent --dry-run                     # deterministic offline agent
+router-core-agent --model-fallback MiniMaxAI/MiniMax-M2.7   # retry once on 5xx/timeout
+router-core-agent --openrouter-url <url> --key-env <VAR>    # any OpenAI-compatible endpoint
+
+make dev        # full stack on fixtures
+make dev-live   # full stack against 192.168.1.1
 ```
 
----
-
-## What you get
-
-- **Typed local API.** 9 endpoints on `127.0.0.1:8484` exposing
-  the router as JSON: device, status, clients, capabilities, and
-  per-capability security observations. See
-  [`docs/FRONTEND_CONTRACT.md`](docs/FRONTEND_CONTRACT.md).
-- **MiniMax reasoning layer.** An HTTP server on
-  `127.0.0.1:8585` that takes a question, calls the
-  appropriate tools, and returns a structured Spanish audit with
-  provenience and explicit evidence limits. See
-  [`docs/PHASE5_AGENT_RUN.md`](docs/PHASE5_AGENT_RUN.md).
-- **Honest capability states.** Each endpoint reports one of
-  `verified`, `absent`, `unsupported_or_unverified`, or
-  `unavailable`. The matrix is derived from a live probe, not a
-  hardcoded map. The frontend never has to guess what is real.
-- **Read-only by construction.** There is no `CapMutate` constant
-  in the type system. An architecture test
-  ([`internal/architecture_test.go`](internal/architecture_test.go))
-  fails the build if any `POST`/`PUT`/`DELETE` shows up in the
-  runtime. The agent's only POST goes to the LLM provider, never
-  to the router.
-- **Fixture replay.** Sanitized captures of the real lab unit
-  live in [`fixtures/captured/tplink-wr841n-v8/`](fixtures/captured/tplink-wr841n-v8/).
-  Every CI run is reproducible without hardware.
-
----
-
-## Supported hardware
-
-| Router | Firmware | Verified |
-| --- | --- | --- |
-| TP-Link TL-WR841N/ND v8.4 | 3.15.9 Build 140724 Rel.63227n | ✅ 2026-09-04, GMI Cloud direct |
-| TP-Link TL-WR841N/ND v8.4 | 3.13.33 Build 130506 Rel.48660n | ✅ earlier capture, sanitized |
-
-Other WR841N v8.x firmwares should work via the same Basic Auth
-recipe. Other vendors (ASUS, MikroTik, Ubiquiti) are not yet
-supported; the vendor-neutral `RouterAdapter` contract is ready
-for new adapters.
-
----
+The API has 11 endpoints: `/healthz`, `/v0/device`, `/v0/status`,
+`/v0/clients`, `/v0/capabilities` and `/v0/security/{wps,dmz,upnp,
+remote-management,forwarding,wireless}`. Every field is documented in
+[`docs/FRONTEND_CONTRACT.md`](docs/FRONTEND_CONTRACT.md).
 
 ## How it works
 
 ```
-Operator
-  -> router-core-agent
-       |
-       | GET /v0/device, /v0/status, /v0/capabilities, /v0/clients
-       v
-     router-core serve (loopback :8484)
-       |
-       | GET /v0/security/<name>  (one tool call per turn)
-       v
-     TP-Link WR841N v8.4 firmware (192.168.1.1)
-
-  router-core-agent
-    |
-    | POST /v1/chat/completions (tool calls)
-    v
-  GMI Cloud Inference Engine
-  (api.gmi-serving.com, MiniMaxAI/MiniMax-M3 primary, M2.7 fallback)
+Operator / dashboard (localhost:5173)
+  |
+  v
+router-core-agent (127.0.0.1:8585)  ----POST /v1/chat/completions---->  GMI Cloud
+  |                                                                     MiniMax-M3
+  | GET /v0/device, /v0/status, /v0/capabilities                        (M2.7 fallback)
+  | GET /v0/security/<name>   (one tool call per turn)
+  v
+router-core serve (127.0.0.1:8484)
+  |
+  | GET only, Basic Auth, 2 MiB cap, RFC1918 only
+  v
+TP-Link WR841N v8.4 firmware (192.168.1.1)
 ```
 
-The runtime is strictly read-only. The agent's only network call
-beyond the local router is to the LLM provider, with a real-time
-fallback: if M3 returns a transient error (5xx, timeout, network
-reset), the agent retries once with M2.7. OpenRouter is supported
-as a drop-in fallback via `--openrouter-url`.
+Every capability the API reports is in one of four states, derived from a
+live probe rather than a hardcoded map:
 
----
+| State | Meaning |
+|---|---|
+| `verified` | Observed on the lab unit and parsed into a real value. |
+| `absent` | The device has no such surface on this firmware. |
+| `unsupported_or_unverified` | The runtime is not wired to this surface yet; it refuses to guess. |
+| `unavailable` | The runtime cannot satisfy the request right now (transport error, session expired). |
+
+The agent sees the same four states. When it says "WPS is absent", that
+is a parsed fact, not a model guess.
+
+## Real runs
+
+Every trace is committed verbatim (keys redacted) so you can compare
+models and reproduce the run.
+
+| Date | Question | Model | Provider | Trace |
+|---|---|---|---|---|
+| 2026-09-04 | Is my Wi-Fi exposed? | MiniMax-M3 | GMI Cloud direct | [md](fixtures/agent-traces/2026-09-04-wifi-exposed.gmi-serving.live.md) · [jsonl](fixtures/agent-traces/2026-09-04-wifi-exposed.gmi-serving.live.jsonl) |
+| 2026-09-04 | Is my Wi-Fi exposed? | MiniMax-M2.7 | OpenRouter | [md](fixtures/agent-traces/2026-09-04-wifi-exposed.live.md) · [jsonl](fixtures/agent-traces/2026-09-04-wifi-exposed.live.jsonl) |
+
+The M3 run names the cipher-332 ambiguity and the hardware EOL risk
+explicitly; the M2.7 run does not. Both are one tool call, one answer.
+
+## Supported hardware
+
+| Router | Firmware | Verified |
+|---|---|---|
+| TP-Link TL-WR841N/ND v8.4 | 3.15.9 Build 140724 Rel.63227n | 2026-09-04, live, GMI Cloud direct |
+| TP-Link TL-WR841N/ND v8.4 | 3.13.33 Build 130506 Rel.48660n | earlier capture, sanitized |
+
+Other WR841N v8.x firmwares should work through the same Basic Auth
+recipe. Other vendors are not supported yet; the vendor-neutral
+`RouterAdapter` interface ([`internal/domain/`](internal/domain/)) is
+the extension point. The WR841N recipe is documented in
+[ADR 0005](docs/adr/0005-verified-wr841n-auth-recipe.md) and
+[`docs/EVIDENCE_TRACE.md`](docs/EVIDENCE_TRACE.md).
 
 ## Safety
 
-- **GET only.** Every request to the router is a `GET`. The
-  agent's only POST is to the LLM provider. Architecture test
-  enforces this at the source level.
-- **Loopback or RFC1918 only.** Public IPs and DNS hostnames are
-  refused at every layer. The serve binds on `127.0.0.1`; the
-  agent refuses `--serve 0.0.0.0`.
-- **2 MiB response body cap.** Anything larger is truncated at
-  the transport.
-- **No cross-host redirects.**
-- **In-memory session only.** The serve reads the admin
-  password from `/dev/tty` with echo disabled, holds it only for
-  the process lifetime, and zeros it on exit. The password lives
-  in `[]byte`; the runtime overwrites the bytes before releasing
-  the reference.
-- **Capabilities cannot be invented.** Each capability is
-  reported as one of `verified`, `absent`,
-  `unsupported_or_unverified`, `unavailable`. The frontend never
-  has to interpret; the matrix is honest.
+The runtime only reaches the observation pages listed in its adapter,
+and no mutation capability is exposed to the model. This is enforced in
+the type system and in CI, not by convention:
 
----
+- There is no mutating capability constant. `CapMutate` does not exist.
+- An architecture test ([`internal/architecture_test.go`](internal/architecture_test.go))
+  fails the build if `POST`, `PUT` or `DELETE` appears in the runtime.
+- Every request to the router is a `GET` to a known, captured path. The
+  agent's only `POST` goes to the LLM provider. Because this firmware
+  family can mutate state through `GET`, the method restriction is
+  defense in depth; the allow-list of paths is the real boundary.
+- Public IPs and DNS hostnames are refused at every layer. `serve` binds
+  to `127.0.0.1`; the agent refuses `--serve 0.0.0.0`.
+- Response bodies are capped at 2 MiB. Cross-host redirects are not
+  followed.
+- The admin password is read once from stdin, held in a `[]byte` for the
+  process lifetime, and overwritten before release. It is never passed
+  as a flag, stored in a file or logged.
 
-## Tested on real hardware
-
-TP-Link TL-WR841N/ND v8.4 — firmware 3.15.9 Build 140724
-Rel.63227n.
-
-The full evidence trail (auth recipe, capability matrix,
-end-to-end traces for both M3 and M2.7 against the live unit)
-is committed in
-[`docs/EVIDENCE_TRACE.md`](docs/EVIDENCE_TRACE.md) and
-[`fixtures/`](fixtures/).
-
----
+Report a vulnerability through [SECURITY.md](SECURITY.md).
 
 ## Documentation
 
-- [Quickstart](docs/EVIDENCE_TRACE.md) — 5-minute setup with mock and
-  real router paths.
-- [Architecture](docs/STATUS.md) — three-layer design, the
-  safety boundary, how the adapter contract works.
-- [API reference](docs/FRONTEND_CONTRACT.md) — every endpoint, every state,
-  every status code.
-- [Agent](docs/PHASE5_AGENT_RUN.md) — how the reasoning layer calls the
-  runtime, tool definition, prompt structure.
-- [Adapter development](docs/adapters/tplink-wr841n.md) — how to
-  add a new vendor adapter.
-- [Evidence](docs/EVIDENCE_TRACE.md) — physical capture
-  trail, prior-art comparison, security recipe divergence.
-- [Demo](docs/demo/) — reproducible end-to-end script.
-- [Architecture decision records](docs/adr/) — every AD the
-  project has committed to.
-- [MiniMax-Week submission](docs/hackathon/minimax-week-2026.md)
-  — judging context and submitted form.
-- [Archive](docs/archive/) — historical context: the original
-  Devin AI overnight pass, the Phase 5 design notes.
+| Document | What it covers |
+|---|---|
+| [Architecture](docs/SDD.md) | Three-layer design, adapter contract, safety boundary |
+| [Project status](docs/STATUS.md) | What is verified, what is not, where it is going |
+| [HTTP API](docs/FRONTEND_CONTRACT.md) | Every endpoint, state and status code |
+| [Agent](docs/PHASE5_AGENT_RUN.md) | Reasoning loop, tool definitions, prompt, how to run it |
+| [Evidence](docs/EVIDENCE_TRACE.md) | Capture trail, prior-art comparison, recipe divergence |
+| [Prior art](docs/PRIOR_ART_PROTOCOL.md) | Protocol evidence from the WR841N family, unverified |
+| [ADRs](docs/adr/) | Every architecture decision the project has committed to |
+| [Frontend](frontend/README.md) | React dashboard: build, env vars, tests |
+| [Archive](docs/archive/) | Historical context and superseded notes |
 
----
+<details>
+<summary><strong>Development</strong></summary>
 
-## Development
+Requires Go 1.25+ and a recent Node.js for the frontend.
 
 ```sh
-# Build
-go build -o ./bin/router-core      ./cmd/router-core
-go build -o ./bin/router-core-agent ./cmd/router-core-agent
-go build -o ./bin/router-core-learn ./cmd/router-core-learn
-cd frontend && npm install && npm run build && cd ..
-
-# Test
-go test ./... -race                  # 9/9 Go packages
-cd frontend && npm test              # 11 frontend tests (5 contract + 6 integration)
-
-# Format
-gofmt -l .
+make build            # bin/router-core, bin/router-core-agent
+make test             # go test ./...
+go test ./... -race   # what CI runs
+make vet && make fmt
+cd frontend && npm install && npm test && npm run lint
 ```
 
-The integration test runner lives at
-`frontend/tests/integration.test.mjs`. The end-to-end demo lives
-at `docs/demo/run-demo.sh`.
+Fixtures live in [`fixtures/`](fixtures/): `synthetic/` for parser
+development, `captured/` for sanitized real captures, `frontend-mocks/`
+for the dashboard, `agent-traces/` for recorded runs. Every CI run is
+reproducible without hardware.
+
+</details>
+
+<details>
+<summary><strong>Troubleshooting</strong></summary>
+
+- **`login: authentication rejected`** with the right password: the
+  firmware answers with a 68-byte "no authority" body when the request
+  does not follow the verified recipe (token-prefixed path plus
+  `Referer`). Make sure you are on a supported firmware; see
+  [ADR 0005](docs/adr/0005-verified-wr841n-auth-recipe.md) and
+  [`docs/EVIDENCE_TRACE.md`](docs/EVIDENCE_TRACE.md).
+- **`unsupported_or_unverified` on a capability you know exists**: the
+  endpoint has not been physically captured yet. Set
+  `ROUTER_ALLOW_UNVERIFIED=1` only for local experiments, never in
+  production.
+- **Agent answers without calling any tool**: check that `serve` is
+  reachable at `--router-core-url` and that `/healthz` returns 200.
+- **The password is visible while typing**: `serve` reads it from plain
+  stdin and does not disable echo yet. Run it in a private terminal or
+  pipe it from a secret manager
+  (`pass show router | ./bin/router-core serve --host 192.168.1.1`).
+- **`--serve 0.0.0.0` refused**: intended. The agent only binds to
+  loopback.
+
+</details>
+
+## FAQ
+
+**Can it change my router settings?**
+No. There is no code path for it, and CI fails if one is added.
+
+**Do I need an API key to try it?**
+No. `--fixtures`, `--mock` and `--dry-run` run everything offline. You
+need a GMI Cloud (or any OpenAI-compatible) key only for live model
+answers.
+
+**Why does the agent answer in Spanish?**
+The prompt targets Spanish-speaking operators of legacy hardware. The
+question can be in English or Spanish.
+
+**Does it work with my router?**
+Only the TP-Link WR841N v8.4 is verified. If you have another WR841N
+firmware, a sanitized capture is the most useful contribution you can
+make; see [`fixtures/captured/README.md`](fixtures/captured/README.md).
+
+**Does it store anything?**
+`probe`, `serve` and the agent write nothing to disk: the password lives
+in process memory only, and there is no config file or cache. Only the
+experimental `router-core-learn` writes sanitized captures, to the
+directory you give it.
 
 ## Contributing
 
-Please read [`CONTRIBUTING.md`](.github/CONTRIBUTING.md) before
-opening an issue or pull request. Conventions: Conventional
-Commits, branch naming, PR rules, ADR-first for non-trivial
-design decisions.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Conventional Commits,
+one concern per branch, ADR before any change to a safety invariant.
+AI coding agents should also read [AGENTS.md](AGENTS.md).
 
-## License & acknowledgements
+The contributions that help most right now: sanitized captures of other
+WR841N firmwares, and a second vendor adapter.
 
-MIT. See [`LICENSE`](LICENSE). Third-party attribution
-(including the original Devin AI overnight pass and prior art) in
-[`NOTICE`](NOTICE). The model integration is provided by
-[GMI Cloud](https://www.gmicloud.ai).
+## License
+
+MIT. See [LICENSE](LICENSE) and [NOTICE](NOTICE) for third-party
+attribution. Model inference for the reference runs was provided by
+[GMI Cloud](https://www.gmicloud.ai) during MiniMax Week 2026
+([submission](docs/hackathon/minimax-week-2026.md)).
