@@ -47,9 +47,10 @@ make build
 
 `probe` prints the device identity, firmware fingerprint and auth state
 parsed from a sanitized fixture. `serve --mock` exposes the same JSON API
-the live mode does, backed by fixtures. `--dry-run` runs the
-deterministic offline agent against it, so you see the shape of an audit
-without a model.
+the live mode does, backed by fixtures. `--dry-run` runs the offline
+stub agent against it: it reads the observations and prints a demo
+answer without calling a model, so the whole loop is exercised end to
+end.
 
 To get the dashboard too, `make dev` starts all three (API on :8484,
 agent on :8585, Vite on :5173). You can also install the binaries
