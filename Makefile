@@ -1,6 +1,6 @@
 GO ?= go
 
-.PHONY: fmt vet test build frontend-dev frontend-build dev dev-live
+.PHONY: fmt vet test build frontend-dev frontend-build desktop-dev desktop-build dev dev-live
 fmt:
 	gofmt -w .
 vet:
@@ -14,6 +14,10 @@ frontend-dev:
 	cd frontend && npm run dev
 frontend-build:
 	cd frontend && npm run build
+desktop-dev:
+	cd frontend && npm run desktop:dev
+desktop-build:
+	cd frontend && npm run desktop:build
 dev:
 	./scripts/dev.sh --mock
 dev-live:

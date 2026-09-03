@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { X, RotateCw } from "lucide-react";
 import { mockSecurity } from "@/data/mockData";
+import { getRouterData } from "@/lib/desktop";
 
 const getCapabilityMeta = (key) => {
   switch (key) {
@@ -98,7 +99,7 @@ const getStatusBadge = (state) => {
   }
 };
 
-export function CapabilitiesGrid({ capabilities = {}, isLive = false, routerApiUrl = "http://127.0.0.1:8484" }) {
+export function CapabilitiesGrid({ capabilities = {}, isLive = false }) {
   const [selectedCap, setSelectedCap] = useState(null);
   const [liveResponse, setLiveResponse] = useState(null);
   const [loadingLive, setLoadingLive] = useState(false);
@@ -107,16 +108,12 @@ export function CapabilitiesGrid({ capabilities = {}, isLive = false, routerApiU
     if (!selectedCap || !isLive) return;
     const meta = getCapabilityMeta(selectedCap);
     let cancelled = false;
-    fetch(`${routerApiUrl}${meta.path}`)
-      .then(async (r) => {
-        const json = await r.json().catch(() => null);
-        return { status: r.status, data: json };
+    getRouterData(meta.path)
+      .then((response) => {
+        if (!cancelled) setLiveResponse(response);
       })
-      .then((res) => {
-        if (!cancelled) setLiveResponse(res);
-      })
-      .catch((err) => {
-        if (!cancelled) setLiveResponse({ status: 0, error: err.message });
+      .catch((error) => {
+        if (!cancelled) setLiveResponse({ status: 0, error: String(error) });
       })
       .finally(() => {
         if (!cancelled) setLoadingLive(false);
@@ -124,7 +121,7 @@ export function CapabilitiesGrid({ capabilities = {}, isLive = false, routerApiU
     return () => {
       cancelled = true;
     };
-  }, [selectedCap, isLive, routerApiUrl]);
+  }, [selectedCap, isLive]);
 
   const handleSelectCap = (key) => {
     setLiveResponse(null);
@@ -202,7 +199,7 @@ export function CapabilitiesGrid({ capabilities = {}, isLive = false, routerApiU
               <div>
                 <span className="text-neutral-400 block mb-1 text-[11px] uppercase">ESTADO EN EL CONTRATO:</span>
                 <div className="bg-black border border-neutral-800 p-3 text-xs text-neutral-300 font-sans">
-                  {capabilities[selectedCap] === "verified" && "✓ Verificado contra hardware real TL-WR841N."}
+                  {capabilities[selectedCap] === "verified" && "✓ Verificado contra hardware real compatible."}
                   {capabilities[selectedCap] === "absent" && "ℹ Característica ausente en este firmware (HTTP 404)."}
                   {capabilities[selectedCap] === "unsupported_or_unverified" && "⏳ Capacidad reservada aún no observada en capturas."}
                   {capabilities[selectedCap] === "unavailable" && "⚠ Servicio no disponible temporalmente (HTTP 503)."}

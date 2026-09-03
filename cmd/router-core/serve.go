@@ -69,6 +69,7 @@ func runServeCommand(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	host := fs.String("host", "192.168.1.1", "local router address (RFC1918 literal)")
+	username := fs.String("username", "admin", "router administrator username")
 	addr := fs.String("addr", "127.0.0.1:8484", "loopback HTTP listen address")
 	timeout := fs.Duration("timeout", 5*time.Second, "per-request timeout to the router")
 	mock := fs.Bool("mock", false, "serve mock fixtures from fixtures/frontend-mocks")
@@ -116,7 +117,7 @@ func runServeCommand(args []string) error {
 	adapter := tplinkwr841v8.New(*host, transport.WithTimeout(*timeout))
 	loginCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := adapter.Login(loginCtx, "admin", password); err != nil {
+	if err := adapter.Login(loginCtx, *username, password); err != nil {
 		return fmt.Errorf("login: %w", err)
 	}
 

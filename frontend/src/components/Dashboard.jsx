@@ -12,14 +12,43 @@ import { ConnectionQuality } from "@/components/ConnectionQuality";
 import { HelpGuide } from "@/components/HelpGuide";
 import { DeviceManager } from "@/components/DeviceManager";
 import { CapabilitiesGrid } from "@/components/CapabilitiesGrid";
-import { 
-  mockDevice, 
-  mockStatus, 
-  mockClients, 
+import {
+  mockDevice,
+  mockStatus,
+  mockClients,
   mockCapabilities
 } from "@/data/mockData";
+import { getRouterData } from "@/lib/desktop";
 
-const ROUTER_API_URL = import.meta.env.VITE_ROUTER_API_URL || "/api/router";
+const EMPTY_DEVICE = {
+  vendor: "Router",
+  model: "sin identificar",
+  hardwareVersion: { value: "" },
+  firmwareVersion: { value: "" },
+  managementAddress: "",
+  authenticated: "unknown"
+};
+const EMPTY_STATUS = {
+  reachable: "unknown",
+  wanStatus: "unknown",
+  uptimeSeconds: null
+};
+const EMPTY_CLIENTS = { state: "unavailable", clients: [] };
+const EMPTY_CAPABILITIES = { capabilities: {} };
+
+/**
+ * Convierte segundos observados en una duración breve y legible.
+ *
+ * @param {number | null | undefined} seconds Segundos informados por el router.
+ * @returns {string} Duración formateada o estado no disponible.
+ */
+function formatUptime(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "NO DISPONIBLE";
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return `${days ? `${days}d ` : ""}${hours}h ${minutes}m`;
+}
 
 export function Dashboard({ isLive, onWanStatusChange }) {
   const [liveDeviceData, setLiveDeviceData] = useState(null);
@@ -31,13 +60,14 @@ export function Dashboard({ isLive, onWanStatusChange }) {
   const [showAdvancedTelemetry, setShowAdvancedTelemetry] = useState(false);
   const [copiedIp, setCopiedIp] = useState(false);
 
-  const deviceData = isLive && liveDeviceData ? liveDeviceData : mockDevice;
-  const statusData = isLive && liveStatusData ? liveStatusData : mockStatus;
-  const clientsData = isLive && liveClientsData ? liveClientsData : mockClients;
-  const capsData = isLive && liveCapsData ? liveCapsData : mockCapabilities;
+  const deviceData = isLive ? liveDeviceData || EMPTY_DEVICE : mockDevice;
+  const statusData = isLive ? liveStatusData || EMPTY_STATUS : mockStatus;
+  const clientsData = isLive ? liveClientsData || EMPTY_CLIENTS : mockClients;
+  const capsData = isLive ? liveCapsData || EMPTY_CAPABILITIES : mockCapabilities;
 
   const handleCopyIp = () => {
-    const ip = deviceData.managementAddress || "192.168.1.1";
+    const ip = deviceData.managementAddress;
+    if (!ip) return;
     navigator.clipboard.writeText(ip);
     setCopiedIp(true);
     setTimeout(() => setCopiedIp(false), 2000);
@@ -48,38 +78,59 @@ export function Dashboard({ isLive, onWanStatusChange }) {
     setLiveError(null);
 
     try {
-      const fetchEndpoint = async (path) => {
-        try {
-          const res = await fetch(`${ROUTER_API_URL}${path}`);
-          const json = await res.json().catch(() => null);
-          return json;
-        } catch {
-          return null;
-        }
-      };
+      const [deviceResponse, statusResponse, clientsResponse, capabilitiesResponse] =
+        await Promise.all([
+          getRouterData("/v0/device"),
+          getRouterData("/v0/status"),
+          getRouterData("/v0/clients"),
+          getRouterData("/v0/capabilities")
+        ]);
 
-      const [devRes, statRes, cliRes, capRes] = await Promise.all([
-        fetchEndpoint("/v0/device"),
-        fetchEndpoint("/v0/status"),
-        fetchEndpoint("/v0/clients"),
-        fetchEndpoint("/v0/capabilities"),
-      ]);
-
-      if (devRes && devRes.vendor) setLiveDeviceData(devRes);
-      if (statRes) {
-        setLiveStatusData(statRes);
-        if (onWanStatusChange && statRes.wanStatus) {
-          onWanStatusChange(statRes.wanStatus);
-        }
+      const errors = [];
+      if (deviceResponse.status === 200 && deviceResponse.data?.authenticated === "true") {
+        setLiveDeviceData(deviceResponse.data);
+      } else {
+        setLiveDeviceData(null);
+        errors.push(deviceResponse.data?.reason || "No se pudo identificar el router");
       }
-      if (cliRes && cliRes.clients) setLiveClientsData(cliRes);
-      if (capRes && capRes.capabilities) setLiveCapsData(capRes);
 
-      if (!devRes && !statRes) {
-        setLiveError(`No se pudo conectar con router-core serve en ${ROUTER_API_URL}. Mostrando datos locales de respaldo.`);
+      if (statusResponse.status === 200) {
+        setLiveStatusData(statusResponse.data);
+        if (onWanStatusChange && statusResponse.data?.wanStatus) {
+          onWanStatusChange(statusResponse.data.wanStatus);
+        }
+      } else {
+        setLiveStatusData(null);
+        errors.push(statusResponse.data?.reason || "El estado WAN no está disponible");
       }
-    } catch {
-      setLiveError(`Error al conectar con ${ROUTER_API_URL}. Inicia el servicio: ./bin/router-core serve --mock (o --host 192.168.1.1)`);
+
+      if (clientsResponse.status === 200 && Array.isArray(clientsResponse.data?.clients)) {
+        setLiveClientsData({
+          ...clientsResponse.data,
+          clients: clientsResponse.data.clients.map((client) => ({
+            ...client,
+            name: client.name?.value || client.name || "Dispositivo sin nombre",
+            lease: client.leaseTime?.value || client.lease || "No disponible"
+          }))
+        });
+      } else {
+        setLiveClientsData(null);
+        errors.push(clientsResponse.data?.reason || "Los clientes conectados no están disponibles");
+      }
+
+      if (capabilitiesResponse.status === 200 && capabilitiesResponse.data?.capabilities) {
+        setLiveCapsData(capabilitiesResponse.data);
+      } else {
+        setLiveCapsData(null);
+      }
+
+      setLiveError(errors.length > 0 ? [...new Set(errors)].join(" · ") : null);
+    } catch (error) {
+      setLiveError(
+        error instanceof Error
+          ? error.message
+          : "No se pudieron obtener observaciones reales del router"
+      );
     } finally {
       setLoading(false);
     }
@@ -119,9 +170,9 @@ export function Dashboard({ isLive, onWanStatusChange }) {
             <AlertCircle className="h-4 w-4 text-rose-400 shrink-0" />
             <span>{liveError}</span>
           </div>
-          <code className="bg-black px-2 py-0.5 text-rose-300 border border-neutral-700 text-xs">
-            ./bin/router-core serve --host 192.168.1.1
-          </code>
+          <span className="bg-black px-2 py-0.5 text-rose-300 border border-neutral-700 text-xs">
+            Observación parcial o no disponible
+          </span>
         </div>
       )}
 
@@ -164,7 +215,7 @@ export function Dashboard({ isLive, onWanStatusChange }) {
               className="flex items-center gap-1.5 font-bold text-white hover:text-primary text-sm transition-colors cursor-pointer text-left w-full group"
               title="Clic para copiar dirección IP"
             >
-              <span>{deviceData.managementAddress || "192.168.1.1"}</span>
+              <span>{deviceData.managementAddress || "NO DISPONIBLE"}</span>
               {copiedIp ? (
                 <Check className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
               ) : (
@@ -187,8 +238,8 @@ export function Dashboard({ isLive, onWanStatusChange }) {
           {/* Seguridad de Red */}
           <div className="border-l-2 border-neutral-800 pl-3 space-y-1 bg-black/40 py-1.5 pr-2">
             <span className="text-neutral-500 uppercase text-xs block font-medium">SEGURIDAD:</span>
-            <span className="font-bold text-emerald-400 text-sm block">
-              PROTEGIDA (WPA2)
+            <span className="font-bold text-neutral-400 text-sm block">
+              {isLive ? "CONSULTAR CAPACIDADES" : "SIMULADA (WPA2)"}
             </span>
           </div>
 
@@ -196,7 +247,7 @@ export function Dashboard({ isLive, onWanStatusChange }) {
           <div className="border-l-2 border-neutral-800 pl-3 space-y-1 bg-black/40 py-1.5 pr-2">
             <span className="text-neutral-500 uppercase text-xs block font-medium">TIEMPO ACTIVO:</span>
             <span className="font-bold text-white text-sm block truncate">
-              {statusData.uptime || "5h 33m 20s"}
+              {statusData.uptime || formatUptime(statusData.uptimeSeconds)}
             </span>
           </div>
 
@@ -204,7 +255,7 @@ export function Dashboard({ isLive, onWanStatusChange }) {
           <div className="border-l-2 border-neutral-800 pl-3 space-y-1 bg-black/40 py-1.5 pr-2 col-span-1 sm:col-span-2 lg:col-span-1">
             <span className="text-neutral-500 uppercase text-xs block font-medium">FIRMWARE:</span>
             <span className="font-bold text-white text-sm block truncate" title={deviceData.firmwareVersion?.value}>
-              {deviceData.firmwareVersion?.value || "3.15.9 Build 140724"}
+              {deviceData.firmwareVersion?.value || "NO DISPONIBLE"}
             </span>
           </div>
         </div>
@@ -212,7 +263,7 @@ export function Dashboard({ isLive, onWanStatusChange }) {
 
       {/* 2. CALIDAD DE CONEXIÓN */}
       <section>
-        <ConnectionQuality />
+        <ConnectionQuality isLive={isLive} />
       </section>
 
       {/* 3. DISPOSITIVOS CONECTADOS */}
@@ -255,7 +306,6 @@ export function Dashboard({ isLive, onWanStatusChange }) {
             <CapabilitiesGrid
               capabilities={capsData.capabilities}
               isLive={isLive}
-              routerApiUrl={ROUTER_API_URL}
             />
           </div>
         )}

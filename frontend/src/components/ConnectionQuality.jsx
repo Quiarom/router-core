@@ -5,10 +5,26 @@ import {
   Activity
 } from "lucide-react";
 
-export function ConnectionQuality() {
+export function ConnectionQuality({ isLive = false }) {
   const [activeMetric, setActiveMetric] = useState("download");
   const [isTesting, setIsTesting] = useState(false);
   const [hoverIndex, setHoverIndex] = useState(null);
+
+  if (isLive) {
+    return (
+      <div className="w-full border-2 border-neutral-800 bg-neutral-950 p-5 text-white">
+        <div className="flex items-start gap-3">
+          <Activity className="h-5 w-5 shrink-0 text-primary" />
+          <div>
+            <h2 className="text-lg font-black uppercase">Calidad de conexión</h2>
+            <p className="mt-1 text-sm text-neutral-400">
+              El router no informa velocidad, latencia ni pérdida de paquetes. No se muestran mediciones simuladas en modo real.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const timelineData = {
     latency: {
