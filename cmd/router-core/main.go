@@ -21,7 +21,9 @@ import (
 	"github.com/Quiarom/router-core/internal/transport"
 )
 
-const version = "0.1.0"
+// version is set at build time via -ldflags="-X main.version=...".
+// See .goreleaser.yml for the full release build configuration.
+var version = "0.1.0-dev"
 
 type options struct {
 	host     string
