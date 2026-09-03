@@ -28,7 +28,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["rpm"],
+    "targets": "all",
     "externalBin": [
       "binaries/router-core",
       "binaries/router-core-agent"

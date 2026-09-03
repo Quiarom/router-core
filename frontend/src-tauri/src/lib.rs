@@ -154,37 +154,43 @@ async fn fetch_json(client: &Client, url: String) -> Result<LocalResponse, Strin
 }
 
 fn validate_device(response: &LocalResponse) -> Result<(), String> {
+    if response.status != 200 {
+        return Err("El router no respondió correctamente".to_string());
+    }
     let authenticated = response
         .data
         .get("authenticated")
-        .and_then(Value::as_str)
-        .is_some_and(|value| value == "true");
+        .and_then(Value::as_str);
+
+    if authenticated == Some("false") {
+        return Err("Autenticación rechazada por el router".to_string());
+    }
+
     let vendor = response
         .data
         .get("vendor")
         .and_then(Value::as_str)
-        .is_some_and(|value| value == "TP-Link");
+        .unwrap_or("");
     let model = response
         .data
         .get("model")
         .and_then(Value::as_str)
-        .is_some_and(|value| value == "TL-WR841N/ND");
+        .unwrap_or("");
     let hardware = response
         .data
         .pointer("/hardwareVersion/value")
         .and_then(Value::as_str)
-        .is_some_and(|value| !value.trim().is_empty());
+        .unwrap_or("");
     let firmware = response
         .data
         .pointer("/firmwareVersion/value")
         .and_then(Value::as_str)
-        .is_some_and(|value| !value.trim().is_empty());
+        .unwrap_or("");
 
-    if response.status != 200 || !authenticated || !vendor || !model || !hardware || !firmware {
-        return Err(
-            "El router respondió, pero no coincide con el adaptador TP-Link verificado".to_string(),
-        );
+    if vendor.is_empty() && model.is_empty() && hardware.is_empty() && firmware.is_empty() {
+        return Err("No se pudo obtener información de identidad del router".to_string());
     }
+
     Ok(())
 }
 
@@ -376,9 +382,28 @@ async fn connect_router(
         return Err(error);
     }
 
+    let vendor = device
+        .data
+        .get("vendor")
+        .and_then(Value::as_str)
+        .unwrap_or("router");
+    let model = device
+        .data
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or("generic");
+    let raw_name = format!("{vendor}-{model}")
+        .to_lowercase()
+        .replace([' ', '/'], "-");
+    let adapter = if raw_name.trim_matches('-').is_empty() {
+        "universal-router".to_string()
+    } else {
+        raw_name.trim_matches('-').to_string()
+    };
+
     Ok(ConnectionInfo {
         host,
-        adapter: "tplink-wr841n-v8".to_string(),
+        adapter,
         assistant_mode: if has_live_assistant {
             "minimax".to_string()
         } else {
@@ -474,9 +499,9 @@ mod tests {
             status: 200,
             data: json!({
                 "authenticated": "unknown",
-                "vendor": "TP-Link",
-                "model": "TL-WR841N/ND",
-                "hardwareVersion": {"value": "hardware"},
+                "vendor": "",
+                "model": "",
+                "hardwareVersion": {"value": ""},
                 "firmwareVersion": {"value": ""}
             }),
         };
@@ -499,13 +524,28 @@ mod tests {
     }
 
     #[test]
-    fn validate_device_rejects_unknown_model() {
+    fn validate_device_accepts_universal_models() {
         let response = LocalResponse {
             status: 200,
             data: json!({
                 "authenticated": "true",
                 "vendor": "Sercomm",
                 "model": "IP3442M-L/US",
+                "hardwareVersion": {"value": "hardware"},
+                "firmwareVersion": {"value": "firmware"}
+            }),
+        };
+        assert!(validate_device(&response).is_ok());
+    }
+
+    #[test]
+    fn validate_device_rejects_unauthenticated() {
+        let response = LocalResponse {
+            status: 200,
+            data: json!({
+                "authenticated": "false",
+                "vendor": "TP-Link",
+                "model": "TL-WR841N/ND",
                 "hardwareVersion": {"value": "hardware"},
                 "firmwareVersion": {"value": "firmware"}
             }),

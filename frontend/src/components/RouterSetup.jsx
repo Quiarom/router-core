@@ -23,9 +23,9 @@ const SETUP_TEXT = {
   apiHint: "Sin clave, el asistente funciona en modo determinista con datos reales.",
   security: "La contraseña se entrega directamente al servicio local y nunca se guarda en disco.",
   connect: "Conectar y leer datos",
-  connecting: "Validando firmware...",
-  supportTitle: "Compatibilidad",
-  supportBody: "TP-Link WR841N v8 está verificado. Otros firmwares se detectan como no compatibles hasta disponer de una captura sanitizada y un adaptador probado."
+  connecting: "Validando router...",
+  supportTitle: "Compatibilidad universal",
+  supportBody: "Diseñado para conectarse con cualquier router mediante interfaz HTTP local. Detecta automáticamente la identidad y capacidades del dispositivo."
 };
 
 /**
