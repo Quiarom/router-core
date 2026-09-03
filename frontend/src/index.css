@@ -3,10 +3,10 @@
 @theme {
   --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", monospace;
-  --color-primary: #FF7F11;
-  --color-primary-hover: #E66F09;
-  --color-primary-light: #2A1505;
-  --color-primary-border: #FF7F11;
+  --color-primary: #8B5CF6;
+  --color-primary-hover: #7C3AED;
+  --color-primary-light: #2E1065;
+  --color-primary-border: #8B5CF6;
 }
 
 @layer base {
@@ -23,3 +23,4 @@
     font-family: var(--font-mono);
   }
 }
+

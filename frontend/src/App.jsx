@@ -31,7 +31,7 @@ export function App() {
         )}
       </main>
 
-      {/* Global Footer */}
+      {/* Global Brutalist Footer */}
       <footer className="border-t-2 border-neutral-800 bg-black py-4 text-xs text-neutral-400 font-mono">
         <div className="w-full px-4 sm:px-6 lg:px-8 flex items-center justify-center text-center">
           <div className="flex flex-wrap items-center justify-center gap-2">
