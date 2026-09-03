@@ -518,7 +518,7 @@ func runLive(ctx context.Context, opts options, routerClient *routerCoreClient, 
 	logf("modelo primario falló (%v): reintentando con %s", opts.openrouterModel, opts.openrouterFallbackModel)
 	result, err = runLiveOnce(ctx, opts, routerClient, apiKey, question, nil, opts.openrouterFallbackModel)
 	if err != nil {
-		return agentResult{}, fmt.Errorf("modelo primario y fallback fallaron: %w", err)
+		return agentResult{}, fmt.Errorf("primary and fallback models both failed: %w", err)
 	}
 	return result, nil
 }
@@ -541,7 +541,17 @@ func runLiveOnce(ctx context.Context, opts options, routerClient *routerCoreClie
 		{Role: "user", Content: question},
 	}
 	events := []Event{}
-	modelClient := &http.Client{Timeout: opts.timeout}
+	// Per-turn model timeout. The global opts.timeout is the
+	// per-observation budget (router + tool call); for the LLM
+	// itself we want a larger envelope because M3 may take
+	// 20-30 seconds per turn for a non-trivial question with
+	// 8 turns of reasoning. We give the model up to 3x the
+	// observation budget, with a 60s floor.
+	modelTimeout := opts.timeout * 3
+	if modelTimeout < 60*time.Second {
+		modelTimeout = 60 * time.Second
+	}
+	modelClient := &http.Client{Timeout: modelTimeout}
 
 	for range 8 {
 		requestBody, err := json.Marshal(chatRequest{
@@ -568,7 +578,7 @@ func runLiveOnce(ctx context.Context, opts options, routerClient *routerCoreClie
 
 		response, err := modelClient.Do(request)
 		if err != nil {
-			return agentResult{}, fmt.Errorf("conectar con OpenRouter: %w", err)
+			return agentResult{}, fmt.Errorf("connect to model endpoint: %w", err)
 		}
 		responseBody, readErr := io.ReadAll(io.LimitReader(response.Body, 2<<20))
 		response.Body.Close()
@@ -584,10 +594,10 @@ func runLiveOnce(ctx context.Context, opts options, routerClient *routerCoreClie
 			return agentResult{}, fmt.Errorf("decodificar respuesta de OpenRouter: %w", err)
 		}
 		if parsed.Error != nil {
-			return agentResult{}, fmt.Errorf("OpenRouter: %s", parsed.Error.Message)
+			return agentResult{}, fmt.Errorf("model endpoint: %s", parsed.Error.Message)
 		}
 		if len(parsed.Choices) == 0 {
-			return agentResult{}, errors.New("OpenRouter no devolvió alternativas")
+			return agentResult{}, errors.New("model endpoint returned no choices")
 		}
 
 		assistantMessage := parsed.Choices[0].Message
