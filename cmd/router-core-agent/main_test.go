@@ -201,7 +201,7 @@ func TestExecuteQuestion_RouterUnreachable(t *testing.T) {
 
 // TestRunLive_HappyPath exercises the OpenRouter path with a
 // mock openrouter server. The mock returns a tool call to
-// get_security("wps"); the agent should execute the tool
+// get_wps_state("wps"); the agent should execute the tool
 // against the mock router-core and feed the result back.
 func TestRunLive_HappyPath(t *testing.T) {
 	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -237,7 +237,7 @@ func TestRunLive_HappyPath(t *testing.T) {
 						"content":"",
 						"tool_calls":[
 							{"id":"call-1","type":"function","function":{
-								"name":"get_security",
+								"name":"get_wps_state",
 								"arguments":"{\"name\":\"wps\"}"
 							}}
 						]
@@ -405,16 +405,33 @@ func TestWithLocalCORS_RejectsForeignOrigin(t *testing.T) {
 // TestIsAllowedSecurityCapability enumerates the six known
 // capabilities and a few non-capabilities to confirm the
 // allowlist.
-func TestIsAllowedSecurityCapability(t *testing.T) {
-	allowed := []string{"wireless", "wps", "dmz", "upnp", "remote-management", "forwarding"}
-	for _, n := range allowed {
-		if !isAllowedSecurityCapability(n) {
-			t.Errorf("%q should be allowed", n)
+// TestResolveToolPathEnumeratesKnownCapabilities confirms the
+// closed mapping covers the six known security capabilities and
+// rejects arbitrary strings. This replaces the previous
+// isAllowedSecurityCapability allowlist test: the new contract
+// is "closed mapping from name to path", not "allowlist of
+// generic name".
+func TestResolveToolPathEnumeratesKnownCapabilities(t *testing.T) {
+	for _, want := range []string{
+		"get_wireless_security",
+		"get_wps_state",
+		"get_dmz_state",
+		"get_upnp_state",
+		"get_remote_management_state",
+		"get_forwarding_rules",
+	} {
+		path, err := resolveToolPath(want)
+		if err != nil {
+			t.Errorf("%q should resolve: %v", want, err)
+			continue
+		}
+		if path == "" {
+			t.Errorf("%q resolved to empty path", want)
 		}
 	}
-	for _, n := range []string{"device", "clients", "capabilities", "not-a-cap"} {
-		if isAllowedSecurityCapability(n) {
-			t.Errorf("%q should NOT be allowed", n)
+	for _, bad := range []string{"", "wireless", "wps", "device", "clients", "capabilities", "not-a-cap"} {
+		if _, err := resolveToolPath(bad); err == nil {
+			t.Errorf("%q should be rejected", bad)
 		}
 	}
 }
@@ -476,7 +493,7 @@ func TestBuildSystemPrompt_IncludesDevice(t *testing.T) {
 		"absent",
 		"unavailable",
 		"unsupported_or_unverified",
-		"get_security",
+		"get_wps_state",
 	} {
 		if !strings.Contains(prompt, must) {
 			t.Errorf("prompt missing %q", must)

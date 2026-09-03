@@ -541,7 +541,7 @@ func runLiveOnce(ctx context.Context, opts options, routerClient *routerCoreClie
 		requestBody, err := json.Marshal(chatRequest{
 			Model:    model,
 			Messages: history,
-			Tools:    []openRouterTool{clientsTool, securityTool},
+			Tools:    modelToolList(),
 		})
 		if err != nil {
 			return agentResult{}, fmt.Errorf("codificar solicitud al modelo: %w", err)
@@ -595,22 +595,9 @@ func runLiveOnce(ctx context.Context, opts options, routerClient *routerCoreClie
 		}
 
 		for _, call := range assistantMessage.ToolCalls {
-			path := ""
-			if call.Function.Name == "get_clients" {
-				path = "/v0/clients"
-			} else if call.Function.Name == "get_security" {
-				var arguments struct {
-					Name string `json:"name"`
-				}
-				if err := json.Unmarshal([]byte(call.Function.Arguments), &arguments); err != nil {
-					return agentResult{}, fmt.Errorf("argumentos inválidos para get_security: %w", err)
-				}
-				if !isAllowedSecurityCapability(arguments.Name) {
-					return agentResult{}, fmt.Errorf("capacidad de seguridad no permitida: %q", arguments.Name)
-				}
-				path = "/v0/security/" + arguments.Name
-			} else {
-				return agentResult{}, fmt.Errorf("herramienta no permitida: %s", call.Function.Name)
+			path, err := resolveToolPath(call.Function.Name)
+			if err != nil {
+				return agentResult{}, err
 			}
 			observed, err := routerClient.get(ctx, path)
 			if err != nil {
@@ -626,15 +613,6 @@ func runLiveOnce(ctx context.Context, opts options, routerClient *routerCoreClie
 		}
 	}
 	return agentResult{}, errors.New("el agente superó ocho turnos sin producir una respuesta final")
-}
-
-func isAllowedSecurityCapability(name string) bool {
-	switch name {
-	case "wireless", "wps", "dmz", "upnp", "remote-management", "forwarding":
-		return true
-	default:
-		return false
-	}
 }
 
 func mustJSON(value any) json.RawMessage {
