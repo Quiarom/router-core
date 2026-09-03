@@ -63,7 +63,7 @@ export GMI_SERVING_API_KEY="<jwt-key>"   # GMI Cloud Inference Engine
 Or run the whole demo with one command:
 
 ```sh
-./docs/demo/run-demo.sh
+./scripts/dev.sh --mock
 ```
 
 ---
@@ -189,7 +189,7 @@ is committed in
   add a new vendor adapter.
 - [Evidence](docs/EVIDENCE_TRACE.md) — physical capture
   trail, prior-art comparison, security recipe divergence.
-- [Demo](docs/demo/) — reproducible end-to-end script.
+- [Demo](scripts/dev.sh) — reproducible end-to-end script (mock router, live agent).
 - [Architecture decision records](docs/adr/) — every AD the
   project has committed to.
 - [MiniMax-Week submission](docs/hackathon/minimax-week-2026.md)
@@ -218,7 +218,7 @@ gofmt -l .
 
 The integration test runner lives at
 `frontend/tests/integration.test.mjs`. The end-to-end demo lives
-at `docs/demo/run-demo.sh`.
+at `scripts/dev.sh --mock`.
 
 ## Contributing
 
