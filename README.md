@@ -34,6 +34,37 @@ Recomendaciones
 
 ---
 
+## Install
+
+The user-facing install is one command. No sudo, no system
+packages, no dependencies.
+
+```sh
+curl -sSf https://raw.githubusercontent.com/Quiarom/router-core/integration/gavetero/install.sh | sh
+```
+
+This downloads the latest prebuilt `gavetero` binary for your
+platform, installs it to `~/.local/bin/gavetero`, and creates
+a `gvt` symlink. The script never requires sudo and never
+modifies the system PATH; if `~/.local/bin` is not on your
+PATH, it prints the one line to add to your shell rc.
+
+After install:
+
+```sh
+gvt version       # confirm the binary
+gvt setup         # store the GMI Cloud API key (one time)
+gvt doctor        # confirm the install
+gvt inspect       # see router observations (mock mode, no hardware)
+gvt ask "..."     # ask a question with MiniMax M3
+```
+
+**For developers working in the repo:** use
+`make install-user` (requires Go 1.22+). The user-facing
+`install.sh` is for everyone else.
+
+---
+
 ## Quickstart
 
 Try it without hardware, in under a minute:
