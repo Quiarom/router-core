@@ -19,6 +19,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/Quiarom/router-core/cmd/gavetero/cmd/sidecars"
 	"strings"
 	"time"
 
@@ -148,11 +150,30 @@ func runInspect(stdout, stderr io.Writer, output string) error {
 //
 // After `make install-user` the router-core sidecar sits in the
 // same install dir as gavetero, so case 2 is the common path.
+// findRouterCoreBin locates the router-core sidecar. The sidecar
+// travels INSIDE the gavetero binary via go:embed (see
+// cmd/sidecars/embed.go). The user never has to install a separate
+// router-core binary; the installer only needs to drop a single
+// gavetero binary.
+//
+// This function prefers, in order:
+//  1. ROUTER_CORE_BIN env var (operator override)
+//  2. The embedded sidecar extracted to a temp dir at call time
+//  3. A router-core binary next to the running executable (legacy)
+//  4. $PATH (legacy)
+//
+// The temp dir extraction is the production path for the
+// user-facing install. The legacy paths exist so contributors
+// working in the repo can point at a locally-built sidecar
+// without rebuilding gavetero.
 func findRouterCoreBin() (string, error) {
 	if env := os.Getenv("ROUTER_CORE_BIN"); env != "" {
 		if _, err := os.Stat(env); err == nil {
 			return env, nil
 		}
+	}
+	if path, err := extractEmbeddedSidecar("router-core"); err == nil {
+		return path, nil
 	}
 	if exe, err := os.Executable(); err == nil {
 		candidate := filepath.Join(filepath.Dir(exe), "router-core")
@@ -163,16 +184,14 @@ func findRouterCoreBin() (string, error) {
 	if path, err := exec.LookPath("router-core"); err == nil {
 		return path, nil
 	}
-	return "", fmt.Errorf(`router-core binary not found.
+	return "", fmt.Errorf(`router-core sidecar not found.
 
-Gavetero needs router-core to expose router observations.
-Build it once with:
+Gavetero normally embeds router-core inside itself. If you see
+this error, the gavetero binary was built without the embed
+step. Run from the repo root:
 
   make build
-
-and either keep both binaries in the same directory, or set:
-
-  export ROUTER_CORE_BIN=/path/to/router-core`)
+  make install-user`)
 }
 
 func reserveLoopbackAddr() (string, error) {
@@ -422,3 +441,25 @@ and either keep both binaries in the same directory, or set:
 
   export ROUTER_CORE_AGENT_BIN=/path/to/router-core-agent`)
 }
+
+// extractEmbeddedSidecar returns the absolute path to the
+// named embedded sidecar binary. The first call extracts
+// both sidecars to a temp directory; subsequent calls return
+// the cached paths.
+//
+// If the embed is empty (e.g. when the source tree was built
+// without running `make build` first), this returns an error
+// so the caller can fall back to the disk lookup.
+func extractEmbeddedSidecar(name string) (string, error) {
+	return sidecars.Get(name)
+}
+
+// extractEmbeddedSidecar returns the absolute path to the
+// named embedded sidecar binary. The first call extracts
+// both sidecars to a temp directory; subsequent calls reuse
+// the cached paths. The extraction is per-process; the temp
+// dir is cleaned up at process exit.
+//
+// If the embed is empty (e.g. when the source tree was built
+// without running `make build` first), this returns an error
+// so the caller can fall back to the disk lookup.

@@ -19,3 +19,8 @@ coverage.*
 *.crt
 secrets.*
 .codegraph/
+# Gavetero sidecars: built by the Makefile, embedded via go:embed.
+# Never commit them; the Makefile regenerates them on every `make build`.
+/cmd/gavetero/cmd/sidecars/router-core
+/cmd/gavetero/cmd/sidecars/router-core-agent
+

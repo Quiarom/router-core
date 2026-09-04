@@ -1,10 +1,10 @@
 # Gavetero / router-core Makefile.
 #
 # The user-facing workflow targets `gavetero` (alias `gvt`) as the
-# only binary the end user types. The transitional binaries
-# (router-core, router-core-agent, router-core-learn) stay
-# available for the engineering harness; the desktop build
-# continues to use them via Tauri's sidecar config.
+# only binary the user types. The transitional binaries
+# (router-core, router-core-agent) are EMBEDDED inside gavetero
+# at build time via go:embed, so the user only ever installs one
+# thing.
 #
 # Conventions:
 #   `make build`        compile the in-tree bin/ output
@@ -17,34 +17,61 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 DIST ?= bin
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
-
-# Transitional binaries still owned by router-core.
-ROUTER_CORE_CMDS = router-core router-core-agent router-core-learn
+SIDECAR_DIR = cmd/gavetero/cmd/sidecars
 
 .PHONY: build install-user uninstall-user fmt vet test check \
         frontend-install frontend-test frontend-build \
         dev dev-live clean
 
+# Build all binaries. The ORDER matters: the sidecar binaries
+# must be built and copied into the embed directory BEFORE
+# gavetero is compiled, because go:embed bakes the file contents
+# into the resulting binary at compile time.
+#
+# After `make build`:
+#   bin/gavetero              -- one binary, contains router-core + router-core-agent
+#   bin/gvt -> gavetero       -- alias for the shell
+#   bin/router-core           -- sidecar copy (also embedded; this is the Tauri-side copy)
+#   bin/router-core-agent     -- sidecar copy
+#   bin/router-core-learn     -- lab tool, kept for the engineering harness
 build:
 	@mkdir -p $(DIST)
+	@mkdir -p $(SIDECAR_DIR)
+	@# 1. Build the sidecars and place them in the embed directory
+	$(GO) build -ldflags="-X main.version=$(VERSION)" -o $(SIDECAR_DIR)/router-core ./cmd/router-core
+	$(GO) build -ldflags="-X main.version=$(VERSION)" -o $(SIDECAR_DIR)/router-core-agent ./cmd/router-core-agent
+	@# 2. Now build gavetero. go:embed picks up the binaries above
+	#    and bakes them into the gavetero binary. The user only
+	#    needs to install gavetero; the sidecars travel inside it.
 	$(GO) build -ldflags="-X main.version=$(VERSION) -X github.com/Quiarom/router-core/cmd/gavetero/cmd.version=$(VERSION)" -o $(DIST)/gavetero ./cmd/gavetero
 	@ln -sf gavetero $(DIST)/gvt
-	@# Transitional binaries, still needed by the engineering harness
-	@# and by the desktop sidecar. Not user-facing.
-	$(GO) build -ldflags="-X main.version=$(VERSION)" -o $(DIST)/router-core ./cmd/router-core
-	$(GO) build -ldflags="-X main.version=$(VERSION)" -o $(DIST)/router-core-agent ./cmd/router-core-agent
+	@# 3. The transitional binaries are also written next to
+	#    gavetero in $(DIST). The Tauri desktop build copies
+	#    them into frontend/src-tauri/binaries/, and the
+	#    engineering harness uses them directly.
+	@cp $(SIDECAR_DIR)/router-core $(DIST)/router-core
+	@cp $(SIDECAR_DIR)/router-core-agent $(DIST)/router-core-agent
 	$(GO) build -ldflags="-X main.version=$(VERSION)" -o $(DIST)/router-core-learn ./cmd/router-core-learn
-	@echo "Built: $(DIST)/{gavetero,gvt -> gavetero,router-core,router-core-agent,router-core-learn}"
+	@chmod +x $(DIST)/router-core $(DIST)/router-core-agent
+	@echo ""
+	@echo "Built:"
+	@echo "  $(DIST)/gavetero            -- user-facing, with embedded sidecars (~17MB)"
+	@echo "  $(DIST)/gvt -> gavetero      -- shell alias"
+	@echo "  $(DIST)/router-core         -- sidecar copy (Tauri / harness)"
+	@echo "  $(DIST)/router-core-agent   -- sidecar copy (Tauri / harness)"
+	@echo "  $(DIST)/router-core-learn   -- lab tool"
 
 # Install the user-facing binary into ~/.local/bin.
+# Because gavetero now embeds the sidecars, only one file is
+# installed. The gvt symlink is for shell convenience.
 # Does not require sudo. Idempotent: re-running is a no-op.
 install-user: build
 	@mkdir -p $(BINDIR)
 	@install -m 0755 $(DIST)/gavetero $(BINDIR)/gavetero
 	@ln -sf gavetero $(BINDIR)/gvt
-	@echo "Installed:"
-	@echo "  $(BINDIR)/gavetero"
-	@echo "  $(BINDIR)/gvt -> gavetero"
+	@echo ""
+	@echo "Installed in $(BINDIR):"
+	@echo "  gvt          -> gavetero (user-facing, single binary with embedded sidecars)"
 	@if echo "$$PATH" | tr ':' '\n' | grep -qx "$(BINDIR)"; then \
 		echo ""; \
 		echo "Try in a new shell:"; \
