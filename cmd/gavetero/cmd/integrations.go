@@ -4,7 +4,7 @@
 //
 //	hermes      -> ~/.hermes/skills/gavetero/
 //	opencode     -> ~/.config/opencode/skills/gavetero/
-//	omp         -> ~/.config/omp/skills/gavetero/  (alias of opencode)
+
 //
 // The install is a plain file copy. The user does not need
 // to restart the agent to pick up the skill (most agents
@@ -30,7 +30,7 @@ func newIntegrationsCmd() *cobra.Command {
 
 Subcommands:
 
-  gvt integrations install <hermes|opencode|omp>
+  gvt integrations install <hermes|opencode>
       Copy skills/gavetero/SKILL.md into the agent's skill
       directory. The skill becomes available as a slash
       command (Hermes) or as a name-activatable tool
@@ -47,7 +47,7 @@ Subcommands:
 			switch args[0] {
 			case "install":
 				if len(args) < 2 {
-					return errors.New("usage: gvt integrations install <hermes|opencode|omp>")
+					return errors.New("usage: gvt integrations install <hermes|opencode>")
 				}
 				return runIntegrationsInstall(cmd.OutOrStdout(), args[1])
 			case "list":
@@ -91,7 +91,7 @@ func runIntegrationsList(stdout io.Writer) error {
 	}{
 		{"hermes", filepath.Join(homeDir(), ".hermes", "skills", "gavetero", "SKILL.md")},
 		{"opencode", filepath.Join(homeDir(), ".config", "opencode", "skills", "gavetero", "SKILL.md")},
-		{"omp", filepath.Join(homeDir(), ".config", "omp", "skills", "gavetero", "SKILL.md")},
+
 	}
 	fmt.Fprintln(stdout, "Gavetero skill install status:")
 	fmt.Fprintln(stdout, "------------------------------")
@@ -111,10 +111,10 @@ func integrationTargetDir(target string) (string, error) {
 	switch target {
 	case "hermes":
 		return filepath.Join(home, ".hermes", "skills", "gavetero"), nil
-	case "opencode", "omp":
-		return filepath.Join(home, ".config", target, "skills", "gavetero"), nil
+	case "opencode":
+		return filepath.Join(home, ".config", "opencode", "skills", "gavetero"), nil
 	default:
-		return "", fmt.Errorf("unknown integration target %q (want hermes, opencode, or omp)", target)
+		return "", fmt.Errorf("unknown integration target %q (want hermes or opencode)", target)
 	}
 }
 
