@@ -25,7 +25,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 - `docs/FRONTEND_CONTRACT.md` and `fixtures/frontend-mocks/`:
   stable JSON contract and mock fixtures for the third-party
   frontend.
-- `HACKATHON_FAQ.md`: MiniMax-Week judging context.
+- `docs/hackathon/minimax-week-2026.md`: MiniMax-Week judging context.
 - `NOTICE`: third-party attribution (Devin AI baseline, prior
   art).
 - `AGENTS.md`: conventions and hard rules for AI coding agents.

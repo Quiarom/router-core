@@ -155,10 +155,12 @@ func TestRunStub_HappyPath(t *testing.T) {
 	}
 }
 
-// TestExecuteQuestion_StubMode exercises the top-level entry
-// point with a mock router-core. It confirms the agent fetches
-// device/status/clients/capabilities and runs the stub when no
-// OpenRouter key is set.
+// TestExecuteQuestion_StubMode confirms that without a live API
+// key, executeQuestion runs the deterministic stub and does NOT
+// preload router observations. The stub generates its own
+// observation steps based on the question. Steps must be >0
+// (the stub fetches at least one observation) but no four
+// automatic preloads happen.
 func TestExecuteQuestion_StubMode(t *testing.T) {
 	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -172,15 +174,23 @@ func TestExecuteQuestion_StubMode(t *testing.T) {
 		dryRun:           true,
 		timeout:          2 * time.Second,
 	}
-	result, err := executeQuestion(context.Background(), opts, "anything")
+	result, err := executeQuestion(context.Background(), opts, "Is my Wi-Fi exposed?")
 	if err != nil {
 		t.Fatalf("executeQuestion: %v", err)
 	}
 	if result.Mode != "stub" {
 		t.Errorf("Mode: got %q, want %q", result.Mode, "stub")
 	}
-	if len(result.Steps) < 4 {
-		t.Errorf("Steps: got %d, want >=4 (device, status, clients, capabilities)", len(result.Steps))
+	if len(result.Steps) == 0 {
+		t.Errorf("Steps: stub must produce >=1 step (got 0)")
+	}
+	// The four preloaded names must NOT be present as automatic
+	// steps: the stub fetches its own sequence based on the
+	// question, and the live reasoning path never preloads.
+	for _, s := range result.Steps {
+		if s.Tool == "get_device" || s.Tool == "get_status" || s.Tool == "get_capabilities" {
+			t.Errorf("Steps: preload tool %q must not appear in stub mode", s.Tool)
+		}
 	}
 }
 
@@ -201,7 +211,7 @@ func TestExecuteQuestion_RouterUnreachable(t *testing.T) {
 
 // TestRunLive_HappyPath exercises the OpenRouter path with a
 // mock openrouter server. The mock returns a tool call to
-// get_security("wps"); the agent should execute the tool
+// get_wps_state("wps"); the agent should execute the tool
 // against the mock router-core and feed the result back.
 func TestRunLive_HappyPath(t *testing.T) {
 	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -237,7 +247,7 @@ func TestRunLive_HappyPath(t *testing.T) {
 						"content":"",
 						"tool_calls":[
 							{"id":"call-1","type":"function","function":{
-								"name":"get_security",
+								"name":"get_wps_state",
 								"arguments":"{\"name\":\"wps\"}"
 							}}
 						]
@@ -264,10 +274,8 @@ func TestRunLive_HappyPath(t *testing.T) {
 		openrouterKeyEnv: "OPENROUTER_API_KEY_TEST",
 		timeout:          2 * time.Second,
 	}
-	device, status, clients, caps := json.RawMessage(`{}`), json.RawMessage(`{}`), json.RawMessage(`{}`), json.RawMessage(`{}`)
 
-	result, err := runLive(context.Background(), opts, c, "test-key",
-		device, status, clients, caps, "Is WPS enabled?", nil)
+	result, err := runLive(context.Background(), opts, c, "test-key", "Is WPS enabled?")
 	if err != nil {
 		t.Fatalf("runLive: %v", err)
 	}
@@ -304,9 +312,7 @@ func TestRunLive_OpenRouterError(t *testing.T) {
 		openrouterKeyEnv: "OPENROUTER_API_KEY_TEST",
 		timeout:          2 * time.Second,
 	}
-	_, err := runLive(context.Background(), opts, c, "test-key",
-		json.RawMessage(`{}`), json.RawMessage(`{}`), json.RawMessage(`{}`), json.RawMessage(`{}`),
-		"anything", nil)
+	_, err := runLive(context.Background(), opts, c, "test-key", "anything")
 	if err == nil {
 		t.Fatal("expected error when openrouter returns 500")
 	}
@@ -405,16 +411,33 @@ func TestWithLocalCORS_RejectsForeignOrigin(t *testing.T) {
 // TestIsAllowedSecurityCapability enumerates the six known
 // capabilities and a few non-capabilities to confirm the
 // allowlist.
-func TestIsAllowedSecurityCapability(t *testing.T) {
-	allowed := []string{"wireless", "wps", "dmz", "upnp", "remote-management", "forwarding"}
-	for _, n := range allowed {
-		if !isAllowedSecurityCapability(n) {
-			t.Errorf("%q should be allowed", n)
+// TestResolveToolPathEnumeratesKnownCapabilities confirms the
+// closed mapping covers the six known security capabilities and
+// rejects arbitrary strings. This replaces the previous
+// isAllowedSecurityCapability allowlist test: the new contract
+// is "closed mapping from name to path", not "allowlist of
+// generic name".
+func TestResolveToolPathEnumeratesKnownCapabilities(t *testing.T) {
+	for _, want := range []string{
+		"get_wireless_security",
+		"get_wps_state",
+		"get_dmz_state",
+		"get_upnp_state",
+		"get_remote_management_state",
+		"get_forwarding_rules",
+	} {
+		path, err := resolveToolPath(want)
+		if err != nil {
+			t.Errorf("%q should resolve: %v", want, err)
+			continue
+		}
+		if path == "" {
+			t.Errorf("%q resolved to empty path", want)
 		}
 	}
-	for _, n := range []string{"device", "clients", "capabilities", "not-a-cap"} {
-		if isAllowedSecurityCapability(n) {
-			t.Errorf("%q should NOT be allowed", n)
+	for _, bad := range []string{"", "wireless", "wps", "device", "clients", "capabilities", "not-a-cap"} {
+		if _, err := resolveToolPath(bad); err == nil {
+			t.Errorf("%q should be rejected", bad)
 		}
 	}
 }
@@ -459,27 +482,32 @@ func TestRunAgentServer_RejectsNonLoopback(t *testing.T) {
 	}
 }
 
-// TestBuildSystemPrompt_IncludesDevice confirms the system
-// prompt carries the live device identity to the model.
-func TestBuildSystemPrompt_IncludesDevice(t *testing.T) {
-	prompt := buildSystemPrompt(
-		json.RawMessage(`{"vendor":"TP-Link","model":"TL-WR841N/ND"}`),
-		json.RawMessage(`{"reachable":"true"}`),
-		json.RawMessage(`{"state":"absent"}`),
-		json.RawMessage(`{"capabilities":{}}`),
-	)
+// TestBuildSystemPrompt_DoesNotPreloadRouterState is the live-mode
+// assertion for commit 7: the system prompt contains policy
+// and the four knowledge states, but does NOT preload
+// device/status/clients/capabilities JSON. The model must call
+// tools to learn.
+func TestBuildSystemPrompt_DoesNotPreloadRouterState(t *testing.T) {
+	prompt := buildSystemPrompt()
 	for _, must := range []string{
-		"auditor",
-		"TP-Link",
-		"TL-WR841N/ND",
 		"verified",
 		"absent",
-		"unavailable",
 		"unsupported_or_unverified",
-		"get_security",
+		"unavailable",
 	} {
 		if !strings.Contains(prompt, must) {
-			t.Errorf("prompt missing %q", must)
+			t.Errorf("system prompt must mention knowledge state %q", must)
+		}
+	}
+	for _, mustNot := range []string{
+		"DISPOSITIVO",
+		"ESTADO",
+		"APARATOS OBSERVADOS",
+		"CAPACIDADES",
+		"TL-WR841N",
+	} {
+		if strings.Contains(prompt, mustNot) {
+			t.Errorf("system prompt must NOT contain preloaded section %q", mustNot)
 		}
 	}
 }

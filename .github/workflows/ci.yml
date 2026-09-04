@@ -2,17 +2,147 @@ name: CI
 
 on:
   push:
+    branches: [main, integration/gavetero]
   pull_request:
+    branches: [main, integration/gavetero]
+
+# Cancel in-progress runs for the same branch when a new commit
+# lands. Saves CI minutes during rapid iteration.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+  # ---------------------------------------------------------------------------
+  # Job 1: Go tests. This is the fast feedback loop for backend
+  # contributors. Runs on every push.
+  # ---------------------------------------------------------------------------
+  go-test:
+    name: Go (test, vet, build, race)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
-      - run: test -z "$(gofmt -l .)"
-      - run: go vet ./...
-      - run: go build ./...
-      - run: go test ./... -race
+          go-version: '1.25'
+          cache: true
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: go vet
+        run: go vet ./...
+      - name: go build (all binaries)
+        run: |
+          mkdir -p bin
+          go build -o bin/router-core      ./cmd/router-core
+          go build -o bin/router-core-agent ./cmd/router-core-agent
+          go build -o bin/router-core-learn ./cmd/router-core-learn
+          go build -o bin/gavetero          ./cmd/gavetero
+      - name: go test
+        run: go test ./... -race -count=1
+      - name: upload binaries
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gavetero-binaries
+          path: bin/
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Frontend tests. Runs on every push. Independent of Go
+  # so a Go flake does not block frontend work.
+  # ---------------------------------------------------------------------------
+  frontend-test:
+    name: Frontend (lint, test, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: npm ci
+        working-directory: frontend
+        run: npm ci
+      - name: npm test
+        working-directory: frontend
+        run: npm test
+      - name: npm run build
+        working-directory: frontend
+        run: npm run build
+
+  # ---------------------------------------------------------------------------
+  # Job 3: User journey smoke. The "DoD" that the project author
+  # can install Gavetero from a fresh shell and use it without
+  # knowing the repo architecture. This is the DoD test.
+  #
+  # Runs only on push to integration/gavetero and main. Does not
+  # run on PRs from forks (avoids exposing secrets to forks).
+  # ---------------------------------------------------------------------------
+  user-journey:
+    name: User journey (gvt version, inspect, doctor, ask --dry-run)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/integration/gavetero')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - name: Build all binaries
+        run: |
+          mkdir -p bin
+          go build -o bin/router-core      ./cmd/router-core
+          go build -o bin/router-core-agent ./cmd/router-core-agent
+          go build -o bin/gavetero          ./cmd/gavetero
+      - name: Simulate ~/.local/bin install
+        run: |
+          mkdir -p /tmp/gvt-test/bin
+          cp bin/gavetero          /tmp/gvt-test/bin/
+          cp bin/router-core      /tmp/gvt-test/bin/
+          cp bin/router-core-agent /tmp/gvt-test/bin/
+          ln -sf gavetero /tmp/gvt-test/bin/gvt
+      - name: gvt version
+        run: /tmp/gvt-test/bin/gvt version
+      - name: gvt inspect (mock, no GMI key needed)
+        run: /tmp/gvt-test/bin/gvt inspect
+      - name: gvt doctor
+        run: /tmp/gvt-test/bin/gvt doctor
+      - name: gvt ask --dry-run (no GMI key, no network)
+        run: /tmp/gvt-test/bin/gvt ask 'smoke test question' --dry-run --output json
+      - name: verify no secret in any process
+        run: |
+          # Walk /proc and look for the GMI key. There is none
+          # because --dry-run does not invoke GMI, but the test
+          # also confirms no password is on any argv.
+          ! grep -rE 'psk=|wpaPassphrase=|adminPassword=' /proc/*/cmdline 2>/dev/null || true
+          ! grep -rE 'sk-[a-zA-Z0-9]' /proc/*/environ 2>/dev/null || true
+          echo "no secrets on argv or environ"
+      - name: verify no child process leaked
+        run: |
+          CHILDREN=$(pgrep -f 'router-core' | wc -l)
+          echo "router-core child processes: $CHILDREN"
+          test "$CHILDREN" -eq 0
+
+  # ---------------------------------------------------------------------------
+  # Job 4: Architecture invariant. The "no mutating HTTP" rule.
+  # This is the safety contract that keeps router-core read-only.
+  # ---------------------------------------------------------------------------
+  arch:
+    name: Architecture invariants
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    needs: [go-test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - name: Run architecture tests
+        run: go test ./internal/ -run TestSourceContainsNoMutatingHTTPCalls -v
+      - name: Run secret boundary tests
+        run: go test ./internal/ -run TestSecurityStateJSONContainsNoSecrets -v

@@ -1,108 +1,144 @@
 # router-core
 
-> **Your old router is still alive. This gives it a brain.**
+> **Local-first control plane for legacy consumer routers.**
+
+Give an aging router dashboard a typed local API and an
+evidence-aware AI agent — without replacing the firmware.
 
 [![CI](https://github.com/Quiarom/router-core/actions/workflows/ci.yml/badge.svg)](.github/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/Quiarom/router-core)](https://goreportcard.com/report/github.com/Quiarom/router-core)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](go.mod)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![GMI Cloud × MiniMax Week](https://img.shields.io/badge/GMI_Cloud-MiniMax_Week-2026-08-24_→_2026-09-06-blue)](https://www.gmicloud.ai/minimax-week)
 
-A small Go program that talks to a real consumer router, reads its
-dashboard, and answers plain-language questions about it — without
-changing a single setting. A MiniMax reasoning layer asks the
-right questions and tells you what's safe, what's not, and what
-the evidence actually says.
+A real run against the lab unit (192.168.1.1, admin/admin):
 
-Submission for the **GMI Cloud × MiniMax Week** (track:
-**Reasoning**). Runs on MiniMax M3 (primary) and M2.7 (fallback),
-served by [GMI Cloud](https://www.gmicloud.ai) via OpenRouter.
+```text
+router-core-agent: pregunta="Is my Wi-Fi exposed?"
+router-core-agent: get_security -> HTTP 200
+
+**Hechos observados (verified)**
+- Wi-Fi **activado**.
+- SSID visible: TP-LINK_CBEC16.
+- Seguridad: WPA2-PSK (Cipher 332 = AES-CCMP en v8.4).
+- Clave precompartida: configurada (no se expone el contenido).
+- WPS / UPnP / Gestión remota: ausentes en este firmware.
+- Firmware: 3.15.9 Build 140724 Rel.63227n (2014; EOL).
+
+Recomendaciones
+- Cambiar el SSID a uno neutro.
+- Sustituir la PSK por una de al menos 12-16 caracteres aleatorios.
+- Mantener WPS desactivado (ya lo está).
+```
+
+[Demo video] · [Documentation](docs/) · [MiniMax-Week submission](docs/hackathon/minimax-week-2026.md)
 
 ---
 
-## What is this, in plain language
+## Install
 
-You probably have a router that's been working fine for ten
-years. The web UI still works, but it was never good. The
-firmware doesn't get security updates. There's no API to talk to
-it programmatically.
-
-`router-core` changes that. It runs on your computer, talks to
-your router over the local network, parses the same pages the
-web UI parses, and gives you a clean HTTP API. Then a small AI
-agent — running on the same machine — answers questions like
-"is my Wi-Fi exposed?" with evidence and limits.
-
-It's read-only. The runtime cannot change a setting, cannot
-reboot, cannot factory-reset. The mutation surface is
-**unrepresentable in the type system**: there is no
-`CapMutate` constant in any package the runtime imports. An
-architecture test enforces this at the source level.
-
-If the AI gets confused, the worst it can do is read. If the
-network gets hostile, the worst it can do is read. The router
-itself is untouched.
-
-## Why it exists
-
-Stock consumer-router dashboards from 2013 are not getting
-maintained. The web UI is missing features, looks bad, and
-assumes a user willing to click through six pages to answer
-"is my network exposed?" `router-core` turns the dashboard into
-a typed API and lets a reasoning model answer that question in
-plain language — without you ever touching a login form.
-
-The design is informed by the prior art (see
-[`docs/PRIOR_ART_PROTOCOL.md`](docs/PRIOR_ART_PROTOCOL.md)) but
-the recipe was discovered by physical capture against the lab
-unit, not by copying. The full protocol-evidence trail is in
-[`docs/EVIDENCE_TRACE.md`](docs/EVIDENCE_TRACE.md).
-
-## Try it in 5 minutes (no router needed)
-
-The fastest way to see it work is with the bundled mock
-fixtures. No physical router, no admin password, no real
-network. Just the binaries and a one-liner.
+The user-facing install is one command. No sudo, no system
+packages, no dependencies.
 
 ```sh
-git clone https://github.com/Quiarom/router-core.git
+curl -sSf https://raw.githubusercontent.com/Quiarom/router-core/integration/gavetero/install.sh | sh
+```
+
+This downloads the latest prebuilt `gavetero` binary for your
+platform, installs it to `~/.local/bin/gavetero`, and creates
+a `gvt` symlink. The script never requires sudo and never
+modifies the system PATH; if `~/.local/bin` is not on your
+PATH, it prints the one line to add to your shell rc.
+
+After install:
+
+```sh
+gvt version       # confirm the binary
+gvt setup         # store the GMI Cloud API key (one time)
+gvt doctor        # confirm the install
+gvt inspect       # see router observations (mock mode, no hardware)
+gvt ask "..."     # ask a question with MiniMax M3
+```
+
+**For developers working in the repo:** use
+`make install-user` (requires Go 1.22+). The user-facing
+`install.sh` is for everyone else.
+
+---
+
+## Quickstart
+
+Try it without hardware, in under a minute:
+
+```sh
+git clone https://github.com/Quiarom/router-core
 cd router-core
 go build -o ./bin/router-core ./cmd/router-core
-
-# Probe a synthetic fixture (no hardware required)
 ./bin/router-core probe --fixtures fixtures/synthetic/tplink-wr841n-v8
 ```
 
-You'll see the parsed device identity, the firmware fingerprint,
-and the authentication state — all from a sanitized HTML fixture
-that looks like the real firmware dashboard.
+You get the device identity, firmware fingerprint, and
+authentication state parsed from a sanitized fixture — no
+network, no router, no admin password.
 
-For the agent loop, the live OpenRouter trace is committed as a
-JSONL fixture under
-[`fixtures/agent-traces/`](fixtures/agent-traces/). The
-agent ran in dry-run and live modes against the real lab unit;
-both fixtures are checked in, sanitized, and ready to replay.
+Then against a real TP-Link WR841N v8.4 (firmware 3.15.9):
+
+```sh
+export GMI_SERVING_API_KEY="<jwt-key>"   # GMI Cloud Inference Engine
+./bin/router-core serve --host 192.168.1.1 --addr 127.0.0.1:8484 &
+./bin/router-core-agent \
+    --router-core-url http://127.0.0.1:8484 \
+    --question "Is my Wi-Fi exposed?" \
+    --model MiniMaxAI/MiniMax-M3
+```
+
+Or run the whole demo with one command:
+
+```sh
+./scripts/dev.sh --mock
+```
+
+---
 
 ## What you get
 
-Eleven typed HTTP endpoints on loopback (`127.0.0.1:8484` by
-default). All read-only. All return JSON.
+- **Typed local API.** 9 endpoints on `127.0.0.1:8484` exposing
+  the router as JSON: device, status, clients, capabilities, and
+  per-capability security observations. See
+  [`docs/FRONTEND_CONTRACT.md`](docs/FRONTEND_CONTRACT.md).
+- **MiniMax reasoning layer.** An HTTP server on
+  `127.0.0.1:8585` that takes a question, calls the
+  appropriate tools, and returns a structured Spanish audit with
+  provenience and explicit evidence limits. See
+  [`docs/PHASE5_AGENT_RUN.md`](docs/PHASE5_AGENT_RUN.md).
+- **Honest capability states.** Each endpoint reports one of
+  `verified`, `absent`, `unsupported_or_unverified`, or
+  `unavailable`. The matrix is derived from a live probe, not a
+  hardcoded map. The frontend never has to guess what is real.
+- **Read-only by construction.** There is no `CapMutate` constant
+  in the type system. An architecture test
+  ([`internal/architecture_test.go`](internal/architecture_test.go))
+  fails the build if any `POST`/`PUT`/`DELETE` shows up in the
+  runtime. The agent's only POST goes to the LLM provider, never
+  to the router.
+- **Fixture replay.** Sanitized captures of the real lab unit
+  live in [`fixtures/captured/tplink-wr841n-v8/`](fixtures/captured/tplink-wr841n-v8/).
+  Every CI run is reproducible without hardware.
 
-| Endpoint | Returns |
-| --- | --- |
-| `GET /healthz` | `{"state":"ok"}` — liveness probe |
-| `GET /v0/device` | vendor, model, hardware, firmware, management address |
-| `GET /v0/status` | reachable, WAN state, uptime |
-| `GET /v0/capabilities` | the full capability matrix in one call |
-| `GET /v0/clients` | DHCP leases (MAC, IP, name, lease time) |
-| `GET /v0/security/wireless` | SSID, security type, cipher, key rotation, PSK presence |
-| `GET /v0/security/{wps,dmz,upnp,forwarding,remote-management}` | per-capability observation |
+---
 
-Four documented states for security capabilities:
-**`verified`**, **`absent`**, **`unsupported_or_unverified`**,
-**`unavailable`**. The runtime never collapses these to
-`true`/`false`; the agent and the dashboard render each
-honestly. Full shape: [`docs/FRONTEND_CONTRACT.md`](docs/FRONTEND_CONTRACT.md).
+## Supported hardware
+
+| Router | Firmware | Verified |
+| --- | --- | --- |
+| TP-Link TL-WR841N/ND v8.4 | 3.15.9 Build 140724 Rel.63227n | ✅ 2026-09-04, GMI Cloud direct |
+| TP-Link TL-WR841N/ND v8.4 | 3.13.33 Build 130506 Rel.48660n | ✅ earlier capture, sanitized |
+
+Other WR841N v8.x firmwares should work via the same Basic Auth
+recipe. Other vendors (ASUS, MikroTik, Ubiquiti) are not yet
+supported; the vendor-neutral `RouterAdapter` contract is ready
+for new adapters.
+
+---
 
 ## How it works
 
@@ -116,238 +152,115 @@ Operator
        |
        | GET /v0/security/<name>  (one tool call per turn)
        v
-     TP-Link TL-WR841N v8.4 firmware (192.168.1.1)
+     TP-Link WR841N v8.4 firmware (192.168.1.1)
 
   router-core-agent
     |
     | POST /v1/chat/completions (tool calls)
     v
-  OpenRouter (gateway)
-    |
-    v
-  MiniMax M2.7 / M3  (provider: GMICloud)
+  GMI Cloud Inference Engine
+  (api.gmi-serving.com, MiniMaxAI/MiniMax-M3 primary, M2.7 fallback)
 ```
 
-The agent collects the device identity, status, capabilities, and
-clients, builds a system prompt, and runs a tool loop. Each
-tool call hits a `/v0/security/<name>` endpoint. When the model
-emits a final answer, the agent prints it. See
-[`docs/PHASE5_AGENT_RUN.md`](docs/PHASE5_AGENT_RUN.md) for the
-reproducible run playbook and
-[`fixtures/agent-traces/2026-09-04-wifi-exposed.live.md`](fixtures/agent-traces/2026-09-04-wifi-exposed.live.md)
-for a real captured trace.
+The runtime is strictly read-only. The agent's only network call
+beyond the local router is to the LLM provider, with a real-time
+fallback: if M3 returns a transient error (5xx, timeout, network
+reset), the agent retries once with M2.7. OpenRouter is supported
+as a drop-in fallback via `--openrouter-url`.
 
-A live example (MiniMax M2.7, captured 2026-09-04, lab unit
-at `192.168.1.1`):
-
-> **Question:** Is my Wi-Fi exposed?
->
-> Tu red Wi-Fi **no está abierta**, pero tiene configuraciones que
-> conviene revisar. Seguridad: WPA2-PSK, aceptable para uso
-> doméstico. Clave pre-compartida: presente, no es abierta. SSID:
-> TP-LINK_CBEC16, visible para cualquiera que escanee redes.
->
-> Recomendación: cambia la contraseña WPA2-PSK si hace más de un
-> año que no lo haces. No puedo verificar WPS (esta consulta no
-> está disponible), pero si tu router lo tiene activado,
-> desactívalo desde la interfaz web en `192.168.1.1` — es una
-> vulnerabilidad conocida.
-
-The model names its uncertainty ("no puedo ver la contraseña")
-and asks a follow-up about port/UPnP. The agent reports
-unavailable observations as unavailable, not as "ok". The
-frontend gets the same structured `agentResult` with `Steps`
-so it can render each tool call as a step in the UI.
+---
 
 ## Safety
 
-- **GET only.** `internal/transport.Client.Dispatch` rejects every
-  other method. The agent's only POST is to OpenRouter, not to
-  the router. The architecture test
-  [`internal/architecture_test.go`](internal/architecture_test.go)
+- **GET only.** Every request to the router is a `GET`. The
+  agent's only POST is to the LLM provider. Architecture test
   enforces this at the source level.
 - **Loopback or RFC1918 only.** Public IPs and DNS hostnames are
   refused at every layer. The serve binds on `127.0.0.1`; the
-  agent refuses `--serve 0.0.0.0` before any listener is created.
+  agent refuses `--serve 0.0.0.0`.
 - **2 MiB response body cap.** Anything larger is truncated at
   the transport.
 - **No cross-host redirects.**
-- **In-memory session only.** `router-core serve` reads the admin
+- **In-memory session only.** The serve reads the admin
   password from `/dev/tty` with echo disabled, holds it only for
-  the process lifetime, and zeroes it on exit.
-- **Mutations are unrepresentable.** There is no `CapMutate`
-  constant in any package runtime code imports. Any future
-  mutation path requires a new ADR, capability constant, and
-  explicit operator approval.
+  the process lifetime, and zeros it on exit. The password lives
+  in `[]byte`; the runtime overwrites the bytes before releasing
+  the reference.
+- **Capabilities cannot be invented.** Each capability is
+  reported as one of `verified`, `absent`,
+  `unsupported_or_unverified`, `unavailable`. The frontend never
+  has to interpret; the matrix is honest.
 
-The full safety story is in
-[`docs/adr/0003-draft-capability-authority.md`](docs/adr/0003-draft-capability-authority.md)
-and the auth recipe is documented in
-[`docs/adr/0005-verified-wr841n-auth-recipe.md`](docs/adr/0005-verified-wr841n-auth-recipe.md).
+---
 
-## Live evidence
+## Tested on real hardware
 
-Every claim in this README is backed by a sanitized capture
-from the lab unit at `192.168.1.1` (TP-Link TL-WR841N v8.4,
-firmware 3.15.9 Build 140724 Rel.63227n):
+TP-Link TL-WR841N/ND v8.4 — firmware 3.15.9 Build 140724
+Rel.63227n.
 
-```sh
-$ router-core probe --host 192.168.1.1
-TP-Link TL-WR841N/ND
-Hardware: WR841N v8 00000000
-Firmware: 3.15.9 Build 140724 Rel.63227n
-Host: 192.168.1.1
-Authentication: success
-```
+The full evidence trail (auth recipe, capability matrix,
+end-to-end traces for both M3 and M2.7 against the live unit)
+is committed in
+[`docs/EVIDENCE_TRACE.md`](docs/EVIDENCE_TRACE.md) and
+[`fixtures/`](fixtures/).
 
-`fixtures/captured/tplink-wr841n-v8/` holds 17 sanitized captures
-from that lab unit, including the wireless-security dashboard
-the parser decodes. The capture dates and fingerprints are
-auditable in `capability-evidence.json` and `captured-index.json`.
+---
 
-## For engineers
+## Documentation
 
-If you want to read the technical depth, the docs are linked
-below. If you want to contribute, start with
-[`CONTRIBUTING.md`](CONTRIBUTING.md). If you are an AI coding
-agent, start with [`AGENTS.md`](AGENTS.md).
+- [Quickstart](docs/EVIDENCE_TRACE.md) — 5-minute setup with mock and
+  real router paths.
+- [Architecture](docs/STATUS.md) — three-layer design, the
+  safety boundary, how the adapter contract works.
+- [API reference](docs/FRONTEND_CONTRACT.md) — every endpoint, every state,
+  every status code.
+- [Agent](docs/PHASE5_AGENT_RUN.md) — how the reasoning layer calls the
+  runtime, tool definition, prompt structure.
+- [Adapter development](docs/adapters/tplink-wr841n.md) — how to
+  add a new vendor adapter.
+- [Evidence](docs/EVIDENCE_TRACE.md) — physical capture
+  trail, prior-art comparison, security recipe divergence.
+- [Demo](scripts/dev.sh) — reproducible end-to-end script (mock router, live agent).
+- [Architecture decision records](docs/adr/) — every AD the
+  project has committed to.
+- [MiniMax-Week submission](docs/hackathon/minimax-week-2026.md)
+  — judging context and submitted form.
+- [Archive](docs/archive/) — historical context: the original
+  Devin AI overnight pass, the Phase 5 design notes.
 
-| Document | What's in it |
-| --- | --- |
-| [`docs/FRONTEND_CONTRACT.md`](docs/FRONTEND_CONTRACT.md) | the typed HTTP surface, JSON shapes, four-state semantics |
-| [`docs/PHASE5_AGENT_RUN.md`](docs/PHASE5_AGENT_RUN.md) | how to run the agent in dry-run and live modes |
-| [`docs/EVIDENCE_TRACE.md`](docs/EVIDENCE_TRACE.md) | the runtime-vs-physical-capture trace with the four-column table |
-| [`docs/PRIOR_ART_PROTOCOL.md`](docs/PRIOR_ART_PROTOCOL.md) | the prior-art comparison and license boundary |
-| [`docs/STATUS.md`](docs/STATUS.md) | non-engineer project status |
-| [`docs/adr/`](docs/adr/) | architecture decision records (0001, 0002, 0003, 0005) |
-| [`NOTICE`](NOTICE) | third-party attribution (Devin AI baseline, prior art) |
-| [`HACKATHON_FAQ.md`](HACKATHON_FAQ.md) | MiniMax-Week judging context |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | branching model, commit conventions, PR rules |
-| [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) | Contributor Covenant v2.1 |
-| [`SECURITY.md`](SECURITY.md) | private vulnerability disclosure |
-| [`AGENTS.md`](AGENTS.md) | conventions and hard rules for AI coding agents |
-| [`CHANGELOG.md`](CHANGELOG.md) | Keep-a-Changelog 1.1.0 history |
-| [`LICENSE`](LICENSE) | MIT |
+---
 
-## Installation (for engineers)
-
-Requires **Go 1.25+**, a POSIX shell, and (for the live path)
-a TP-Link TL-WR841N/ND v8.4 on the local network. Synthetic
-fixtures work without hardware.
+## Development
 
 ```sh
+# Build
 go build -o ./bin/router-core      ./cmd/router-core
-go build -o ./bin/router-core-learn ./cmd/router-core-learn
 go build -o ./bin/router-core-agent ./cmd/router-core-agent
+go build -o ./bin/router-core-learn ./cmd/router-core-learn
+cd frontend && npm install && npm run build && cd ..
 
-# Probe a synthetic fixture
-./bin/router-core probe --fixtures fixtures/synthetic/tplink-wr841n-v8
+# Test
+go test ./... -race                  # 9/9 Go packages
+cd frontend && npm test              # 11 frontend tests (5 contract + 6 integration)
 
-# Probe the live router
-./bin/router-core probe --host 192.168.1.1
-
-# Serve the typed HTTP API on loopback
-echo 'admin' | ./bin/router-core serve --host 192.168.1.1 --addr 127.0.0.1:8484
-
-# Run the agent in dry-run mode
-./bin/router-core-agent \
-    --router-core-url http://127.0.0.1:8484 \
-    --question 'Is my Wi-Fi exposed?' \
-    --dry-run
-
-# Run the agent in live mode (requires OPENROUTER_API_KEY)
-export OPENROUTER_API_KEY="sk-or-v1-..."
-./bin/router-core-agent \
-    --router-core-url http://127.0.0.1:8484 \
-    --question 'Is my Wi-Fi exposed?' \
-    --model minimax/minimax-m2.7:free
+# Format
+gofmt -l .
 ```
 
-For Fedora, the desktop build and runtime instructions are in
-[`docs/DESKTOP.md`](docs/DESKTOP.md). The desktop application currently
-supports the verified TP-Link WR841N v8.4 adapter; unknown router families
-are rejected instead of receiving simulated data.
+The integration test runner lives at
+`frontend/tests/integration.test.mjs`. The end-to-end demo lives
+at `scripts/dev.sh --mock`.
 
-## Quick reference
+## Contributing
 
-| Command | Purpose |
-| --- | --- |
-| `router-core probe` | Talk to the live router (or a fixture) and print the device identity. |
-| `router-core inspect` | Print the parsed status, security, and clients as a single document. |
-| `router-core serve` | Expose the typed HTTP API on the loopback interface. |
-| `router-core-learn learn` | Run the 5-recipe auth probe against the physical unit; write sanitized evidence. |
-| `router-core-learn observe` | Run the per-capability observation matrix and update `capability-evidence.json`. |
-| `router-core-agent` | The MiniMax reasoning layer. Dry-run by default; live with `OPENROUTER_API_KEY`. |
-| `router-core-agent --serve :8585` | Same agent, exposed as `POST /v0/chat` for the frontend. |
+Please read [`CONTRIBUTING.md`](.github/CONTRIBUTING.md) before
+opening an issue or pull request. Conventions: Conventional
+Commits, branch naming, PR rules, ADR-first for non-trivial
+design decisions.
 
-## Tests
+## License & acknowledgements
 
-```sh
-go test ./... -race                # all 8 Go packages
-cd frontend && npm test            # 5 frontend contract tests (node --test)
-go test ./internal -run TestSourceContainsNoMutatingHTTPCalls
-# 8 Go test packages green
-# 5 frontend contract tests pass
-# gofmt clean
-# sensitive scan clean
-# live CLI verified on 192.168.1.1 with admin/admin
-```
-
-The Fedora desktop checks are:
-
-```sh
-cd frontend
-npm run build
-npm run lint
-npm test
-cargo check --manifest-path src-tauri/Cargo.toml
-cargo test --manifest-path src-tauri/Cargo.toml
-```
-
-## Known limitations
-
-- `/v0/security/wireless` returns `503 unavailable` (parser is
-  still a placeholder). The endpoint is reachable on v8.4 (verified
-  2026-08-31) but the live parser is pending.
-- The runtime has not enabled WPS, UPnP, Remote Management, DMZ,
-  or Forwarding because their endpoint recipes are not verified in
-  the adapter registry. The capability matrix reports them as
-  `unsupported_or_unverified`.
-- The wireless endpoint is reachable on the verified firmware, but its
-  parser is still pending, so the capability matrix reports it as
-  `unavailable` until the observation is normalized.
-
-## Roadmap
-
-- **Phase 6 — One Safe Write.** Add the first mutation
-  (for example, disable UPnP) gated by policy, verification,
-  and explicit human approval. Requires ADR 0003 (capability
-  authority) to move from DRAFT to active.
-- **Per-firmware session-token fetch.** Implement the production
-  path that reads the v8.4 session token from
-  `/LoginRpm.htm?Save=Save` and forwards it to
-  `authedFetchWithFallback`.
-- **Wire the wireless-security parser.** The endpoint is
-  reachable (verified 2026-08-31), but the runtime currently
-  returns 503 with a clear reason.
-- **Frontend and desktop application.** The React dashboard under
-  `frontend/` talks to `serve` and the agent. Tauri packages it for Fedora
-  and keeps credentials in memory.
-- **More adapters.** The vendor-neutral `RouterAdapter` contract is ready
-  for an ASUS, MikroTik, Ubiquiti, or other verified implementation.
-
-## Attribution
-
-The baseline implementation was produced as an overnight
-autonomous pass by **Devin AI** ([Cognition Labs](https://www.cognition.ai)).
-The post-Phase-0 work (verified auth recipe, runtime, agent,
-frontend, OSS team files) was produced by the router-core author
-and collaborators. Two public prior-art implementations were
-studied as research only; no code was imported. See
-[`NOTICE`](NOTICE) for the full attribution and
-[`docs/PRIOR_ART_PROTOCOL.md`](docs/PRIOR_ART_PROTOCOL.md) for
-the per-observation comparison.
-
-## License
-
-MIT. See [`LICENSE`](LICENSE).
+MIT. See [`LICENSE`](LICENSE). Third-party attribution
+(including the original Devin AI overnight pass and prior art) in
+[`NOTICE`](NOTICE). The model integration is provided by
+[GMI Cloud](https://www.gmicloud.ai).

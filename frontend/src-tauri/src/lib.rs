@@ -260,6 +260,12 @@ async fn connect_router(
             &username,
             "--addr",
             &router_addr,
+            // The router password is written to the child stdin
+            // below (not as --password, which is intentionally
+            // not a supported flag in router-core serve).
+            // The --password-stdin flag tells the child binary
+            // to read the password from stdin, not from a TTY.
+            "--password-stdin",
         ]);
     let (mut router_events, mut router_child) = router_command
         .spawn()

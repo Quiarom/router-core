@@ -20,8 +20,8 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/Quiarom/router-core/cmd/router-core-learn/sanitize"
 	"github.com/Quiarom/router-core/internal/domain"
+	"github.com/Quiarom/router-core/internal/lab/sanitize"
 )
 
 const (
@@ -734,7 +734,7 @@ func persistEvidence(
 			Date:           time.Now().UTC().Format(time.RFC3339),
 			Host:           host,
 			FirmwareTarget: expectedFirmware,
-			Sanitization:   "apply cmd/router-core-learn/sanitize.Default to all persisted bodies; structural redirect token and Authorization material replaced with placeholders; MACs, SSIDs, Wi-Fi keys, password fields redacted; fingerprint (vendor/model/hardware/firmware) preserved",
+			Sanitization:   "apply internal/lab/sanitize.Default to all persisted bodies; structural redirect token and Authorization material replaced with placeholders; MACs, SSIDs, Wi-Fi keys, password fields redacted; fingerprint (vendor/model/hardware/firmware) preserved",
 		},
 	}
 
@@ -782,7 +782,7 @@ Host: %s
 Firmware target: %s
 
 Sanitization policy:
-- apply cmd/router-core-learn/sanitize.Default to all persisted bodies;
+- apply internal/lab/sanitize.Default to all persisted bodies;
 - structural redirect token and Authorization material replaced with placeholders;
 - MACs, SSIDs, Wi-Fi keys, password fields redacted;
 - fingerprint (vendor/model/hardware/firmware) preserved.

@@ -75,7 +75,7 @@ func listenLoopback() (net.Listener, error) {
 func runServeWithAdapter(t *testing.T, adapter *tplinkwr841v8.Adapter) (string, func()) {
 	t.Helper()
 	mux := http.NewServeMux()
-	store := &sessionStore{password: "hunter2"}
+	store := &sessionStore{password: []byte("hunter2")}
 	registerRoutes(mux, adapter, store)
 
 	ln, err := listenLoopback()

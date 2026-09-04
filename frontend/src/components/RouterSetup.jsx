@@ -19,7 +19,7 @@ const SETUP_TEXT = {
   host: "Dirección del router",
   username: "Usuario administrador",
   password: "Contraseña del router",
-  apiKey: "Clave de OpenRouter (opcional)",
+  apiKey: "AI provider API key (opcional)",
   apiHint: "Sin clave, el asistente funciona en modo determinista con datos reales.",
   security: "La contraseña se entrega directamente al servicio local y nunca se guarda en disco.",
   connect: "Conectar y leer datos",

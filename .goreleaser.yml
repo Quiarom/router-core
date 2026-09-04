@@ -1,0 +1,127 @@
+# .goreleaser.yml — runs on `goreleaser release` (locally) or in CI
+# on `git tag v*`. See https://goreleaser.com for full schema.
+version: 2
+
+project_name: router-core
+
+# Dynamic version from the current git tag.
+# Override with --snapshot for nightly builds.
+# The Makefile also builds locally with -ldflags.
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/router-core
+    binary: router-core
+    id: router-core
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+  - main: ./cmd/router-core-agent
+    binary: router-core-agent
+    id: router-core-agent
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+  - main: ./cmd/router-core-learn
+    binary: router-core-learn
+    id: router-core-learn
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - X main.version={{ .Version }}
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+      - NOTICE
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+release:
+  github:
+    owner: Quiarom
+    name: router-core
+  draft: true
+  header: |
+    ## router-core {{ .Tag }}
+
+    [Full changelog](https://github.com/Quiarom/router-core/compare/{{ .PreviousTag }}...{{ .Tag }})
+  footer: |
+    ## Install
+
+    ```sh
+    go install github.com/Quiarom/router-core/cmd/router-core@{{ .Tag }}
+    ```
+
+    ## Verify
+
+    ```sh
+    goreleaser verify
+    ```
+  prerelease: '{{ .Prerelease }}'
+  mode: replace
+  draft: true
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+brews:
+  tap:
+    owner: Quiarom
+    name: homebrew-tools
+  commit_author:
+    name: router-core-bot
+    email: bot@router-core.local
+  folder: Formula
+  homepage: "https://github.com/Quiarom/router-core"
+  description: "Local-first control plane for legacy consumer routers"
+  license: "MIT"
+  dependencies:
+    - name: go
+      type: build
+  test: |
+    system "true"

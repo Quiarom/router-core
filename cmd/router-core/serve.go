@@ -11,16 +11,16 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"golang.org/x/term"
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Quiarom/router-core/internal/adapters/fixture"
 	"github.com/Quiarom/router-core/internal/adapters/tplinkwr841v8"
 	"github.com/Quiarom/router-core/internal/domain"
 	"github.com/Quiarom/router-core/internal/transport"
@@ -28,52 +28,72 @@ import (
 
 type sessionStore struct {
 	mu       sync.Mutex
-	password string
+	password []byte
 }
 
-func (s *sessionStore) get() (string, bool) {
+func (s *sessionStore) get() []byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.password, s.password != ""
+	return append([]byte(nil), s.password...)
 }
 
-func (s *sessionStore) set(p string) {
+func (s *sessionStore) set(p []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.password = p
-}
-
-func readPasswordNoEcho() (string, error) {
-	type readResult struct {
-		buf []byte
-		err error
+	for i := range s.password {
+		s.password[i] = 0
 	}
-	ch := make(chan readResult, 1)
-	go func() {
-		buf := make([]byte, 256)
-		n, err := os.Stdin.Read(buf)
-		ch <- readResult{buf[:n], err}
-	}()
-	select {
-	case res := <-ch:
-		if res.err != nil && res.err != io.EOF {
-			return "", res.err
+	s.password = append([]byte(nil), p...)
+}
+
+// readRouterPassword acquires the router admin password in a way that
+// respects the four ways the user might supply it:
+//
+//  1. --password-stdin flag: read plaintext from os.Stdin (intended for
+//     systemd, container secrets, scripts). Refuses if no TTY.
+//  2. Interactive TTY: prompt with prompt printed to stderr, then
+//     read using golang.org/x/term.ReadPassword which DISABLES
+//     terminal echo for the duration of the read. The previous
+//     implementation used os.Stdin.Read which did NOT disable
+//     echo and so the password was visible on the terminal.
+//  3. Non-interactive without --password-stdin: fail fast with
+//     an actionable error. The previous 30-second wait was
+//     blocking CI and scripts in non-interactive mode.
+//
+// NEVER accepts --password <secret>: that would put the secret
+// on the process command line, where it is visible to ps(1)
+// and any /proc snapshot.
+func readRouterPassword(stdinFlag bool) ([]byte, error) {
+	if stdinFlag {
+		if term.IsTerminal(int(os.Stdin.Fd())) {
+			return nil, errors.New("--password-stdin is set but stdin is a TTY; refusing to read a password from a terminal in plaintext")
 		}
-		return strings.TrimRight(string(res.buf), "\r\n"), nil
-	case <-time.After(30 * time.Second):
-		return "", errors.New("timed out waiting 30s for password on stdin")
+		buf, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return nil, fmt.Errorf("read stdin: %w", err)
+		}
+		return []byte(strings.TrimRight(string(buf), "\r\n")), nil
 	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return nil, errors.New("router-core: no TTY available for interactive password entry. Use --password-stdin to read from a pipe (CI, systemd, container secrets).")
+	}
+	fmt.Fprintln(os.Stderr, "router-core: enter router admin password (input hidden):")
+	pw, err := term.ReadPassword(int(os.Stdin.Fd()))
+	if err != nil {
+		return nil, fmt.Errorf("read password from TTY: %w", err)
+	}
+	return pw, nil
 }
 
 func runServeCommand(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	host := fs.String("host", "192.168.1.1", "local router address (RFC1918 literal)")
-	username := fs.String("username", "admin", "router administrator username")
 	addr := fs.String("addr", "127.0.0.1:8484", "loopback HTTP listen address")
 	timeout := fs.Duration("timeout", 5*time.Second, "per-request timeout to the router")
-	mock := fs.Bool("mock", false, "serve mock fixtures from fixtures/frontend-mocks")
-	fixturesDir := fs.String("fixtures", "fixtures/frontend-mocks", "directory containing mock JSON fixtures")
+	mock := fs.Bool("mock", false, "run against a fixture-backed adapter (no network)")
+	mockPath := fs.String("mock-fixture", "", "path to a synthetic fixture (default: fixtures/synthetic/tplink-wr841n-v8)")
+	passwordStdin := fs.Bool("password-stdin", false, "read the admin password from stdin (refuses if stdin is a TTY)")
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) || err == flag.ErrHelp {
 			return nil
@@ -83,52 +103,50 @@ func runServeCommand(args []string) error {
 	if !isLoopbackAddr(*addr) {
 		return fmt.Errorf("refusing to serve on non-loopback address %q (loopback only)", *addr)
 	}
-
+	var adapter domain.RouterAdapter
+	var store *sessionStore
 	if *mock {
-		fmt.Fprintf(os.Stderr, "router-core serve: running in mock fixtures mode (%s), listening on %s\n", *fixturesDir, *addr)
-		mux := http.NewServeMux()
-		registerMockRoutes(mux, *fixturesDir)
-		srv := &http.Server{
-			Addr:              *addr,
-			Handler:           withLocalCORS(mux),
-			ReadHeaderTimeout: 5 * time.Second,
-			WriteTimeout:      10 * time.Second,
-			IdleTimeout:       60 * time.Second,
+		fixturePath := *mockPath
+		if fixturePath == "" {
+			fixturePath = "fixtures/synthetic/tplink-wr841n-v8"
 		}
-		return srv.ListenAndServe()
-	}
+		f := fixture.New(fixturePath)
+		adapter = f
+		store = &sessionStore{password: nil}
+		fmt.Fprintf(os.Stderr, "router-core serve: mock mode, fixture=%s\n", fixturePath)
+	} else {
+		if !isRFC1918OrLoopback(*host) {
+			return fmt.Errorf("refusing to observe host %q: not loopback/RFC1918", *host)
+		}
+		fmt.Fprintf(os.Stderr, "router-core serve: reading admin password from stdin (timeout 30s)\n")
+		password, err := readRouterPassword(*passwordStdin)
+		if err != nil {
+			return fmt.Errorf("read password: %w", err)
+		}
+		if len(password) == 0 {
+			return errors.New("empty password")
+		}
+		defer zeroBytes(&password)
 
-	if !isRFC1918OrLoopback(*host) {
-		return fmt.Errorf("refusing to observe host %q: not loopback/RFC1918", *host)
-	}
+		store := &sessionStore{password: append([]byte(nil), password...)}
+		defer zeroBytes(&store.password)
 
-	fmt.Fprintf(os.Stderr, "router-core serve: reading admin password from stdin (timeout 30s)\n")
-	password, err := readPasswordNoEcho()
-	if err != nil {
-		return fmt.Errorf("read password: %w", err)
-	}
-	if password == "" {
-		return errors.New("empty password")
-	}
-	defer zeroString(&password)
+		adapter := tplinkwr841v8.New(*host, transport.WithTimeout(*timeout))
+		loginCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := adapter.Login(loginCtx, "admin", string(password)); err != nil {
+			return fmt.Errorf("login: %w", err)
+		}
 
-	store := &sessionStore{password: password}
-
-	adapter := tplinkwr841v8.New(*host, transport.WithTimeout(*timeout))
-	loginCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := adapter.Login(loginCtx, *username, password); err != nil {
-		return fmt.Errorf("login: %w", err)
+		fmt.Fprintf(os.Stderr, "router-core serve: authenticated, listening on %s\n", *addr)
 	}
-
-	fmt.Fprintf(os.Stderr, "router-core serve: authenticated, listening on %s\n", *addr)
 
 	mux := http.NewServeMux()
 	registerRoutes(mux, adapter, store)
 
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           withLocalCORS(mux),
+		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      10 * time.Second,
 		IdleTimeout:       60 * time.Second,
@@ -176,14 +194,17 @@ func isRFC1918OrLoopback(addr string) bool {
 	return false
 }
 
-// zeroString zeroes a string in place. Go strings are immutable
-// but the backing bytes of a literal-converted []byte share
-// storage with the string; this is best-effort.
-func zeroString(s *string) {
-	if s == nil {
+// zeroBytes overwrites every byte in p with zero. Unlike a Go
+// string, a []byte is mutable. This is the best we can do in
+// Go without an unsafe zeroing library.
+func zeroBytes(p *[]byte) {
+	if p == nil {
 		return
 	}
-	*s = ""
+	for i := range *p {
+		(*p)[i] = 0
+	}
+	*p = (*p)[:0]
 }
 
 type capabilityError struct {
@@ -214,7 +235,16 @@ func writeUnavailable(w http.ResponseWriter, reason string) {
 	writeJSON(w, http.StatusServiceUnavailable, capabilityError{State: "unavailable", Reason: reason})
 }
 
-func registerRoutes(mux *http.ServeMux, adapter *tplinkwr841v8.Adapter, store *sessionStore) {
+// securityCapable is the optional contract for adapters that can
+// serve per-capability security endpoints. The TP-Link WR841N
+// adapter implements it (one HTTP fetch per capability). The
+// fixture adapter does not: in mock mode every per-capability
+// security endpoint returns 404 with state "unsupported_or_unverified".
+type securityCapable interface {
+	SecurityCapability(ctx context.Context, name string) (domain.SecurityState, error)
+}
+
+func registerRoutes(mux *http.ServeMux, adapter domain.RouterAdapter, store *sessionStore) {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, capabilityStatus{State: "ok", Status: 200})
 	})
@@ -232,31 +262,132 @@ func registerRoutes(mux *http.ServeMux, adapter *tplinkwr841v8.Adapter, store *s
 
 // handleCapabilities returns the live capability matrix. Each
 // entry is one of the four documented states (verified, absent,
-// unsupported_or_unverified, unavailable).
-func handleCapabilities(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+// unsupported_or_unverified, unavailable). The matrix is derived
+// from the adapter's per-capability dispatch: each security
+// endpoint is fetched once with a short timeout, and the
+// returned state is mapped to the four-state vocabulary.
+// device is not a security endpoint, so we report it as
+// "verified" only if Identify succeeds, "unavailable" otherwise.
+func handleCapabilities(adapter domain.RouterAdapter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		caps := capabilitiesResponse{
-			Capabilities: map[string]string{
-				"device":            "verified",
-				"status":            "verified",
-				"clients":           "verified",
-				"wireless_security": "unavailable",
-				"wps":               "unsupported_or_unverified",
-				"dmz":               "unsupported_or_unverified",
-				"upnp":              "unsupported_or_unverified",
-				"remote_management": "unsupported_or_unverified",
-				"forwarding":        "unsupported_or_unverified",
-			},
-		}
+		caps := capabilitiesResponse{Capabilities: probeCapabilities(r.Context(), adapter)}
 		writeJSON(w, http.StatusOK, caps)
 	}
 }
 
-func handleDevice(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+// probeCapabilities returns the live state of every endpoint the
+// runtime exposes. The runtime has already authenticated once
+// at startup; each probe reuses the session. There are 9 caps
+// in total: device, status, clients are NOT security caps
+// (the adapter has typed methods for them); the remaining 6
+// go through SecurityCapability, which returns the four-state
+// vocabulary. absent = firmware does not implement; verified =
+// runtime parsed the response; unsupported_or_unverified =
+// runtime has no parser; unavailable = transport error.
+// probeCapabilities returns the live state of every endpoint the
+// runtime exposes. The runtime has already authenticated once at
+// startup; each probe reuses the session.
+//
+// There are 9 capabilities in total: device, status, clients are
+// NOT security caps (the adapter has typed methods for them); the
+// remaining 6 (wireless_security, wps, dmz, upnp, remote_management,
+// forwarding) go through SecurityCapability, which already
+// classifies the response into the four-state vocabulary.
+//
+//	verified                    adapter read the value
+//	absent                      firmware does not implement
+//	unsupported_or_unverified   runtime has no parser
+//	unavailable                 transport failure, timeout, refused
+//
+// The probe distinguishes absent from unsupported_or_unverified by
+// inspecting the underlying error: ErrObservationAbsent means the
+// firmware did not return the field; ErrUnverifiedEndpoint means
+// the runtime has no parser; anything else is transport-level
+// failure.
+func probeCapabilities(ctx context.Context, adapter domain.RouterAdapter) map[string]string {
+	sc, _ := adapter.(securityCapable)
+	out := map[string]string{}
+	// Non-security caps have typed methods on the adapter.
+	type nonSecurityProbe struct {
+		name string
+		fn   func(context.Context) error
+	}
+	nonSecurity := []nonSecurityProbe{
+		{"device", func(c context.Context) error { _, e := adapter.Identify(c); return e }},
+		{"status", func(c context.Context) error { _, e := adapter.Status(c); return e }},
+		{"clients", func(c context.Context) error { _, e := adapter.Clients(c); return e }},
+	}
+	for _, ns := range nonSecurity {
+		nctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		err := ns.fn(nctx)
+		cancel()
+		if err == nil {
+			out[ns.name] = "verified"
+		} else {
+			out[ns.name] = "unavailable"
+		}
+	}
+	// Security caps go through SecurityCapability when the adapter
+	// implements it. The fixture adapter does not; in mock mode all 6
+	// security caps are reported as unsupported_or_unverified.
+	securityCaps := []string{
+		tplinkwr841v8.OpWireless,
+		tplinkwr841v8.OpWPS,
+		tplinkwr841v8.OpDMZ,
+		tplinkwr841v8.OpUPnP,
+		tplinkwr841v8.OpRemoteManagement,
+		tplinkwr841v8.OpForwarding,
+	}
+	for _, name := range securityCaps {
+		if sc == nil {
+			out[name] = "unsupported_or_unverified"
+			continue
+		}
+		nctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		_, err := sc.SecurityCapability(nctx, name)
+		cancel()
+		if err == nil {
+			out[name] = "verified"
+			continue
+		}
+		if errors.Is(err, domain.ErrObservationAbsent) {
+			out[name] = "absent"
+			continue
+		}
+		if errors.Is(err, domain.ErrUnverifiedEndpoint) {
+			out[name] = "unsupported_or_unverified"
+			continue
+		}
+		out[name] = "unavailable"
+	}
+	// Expose each security cap under both the Op name (with
+	// hyphens, e.g. "remote-management") and the agent-facing name
+	// (with underscores, e.g. "remote_management"). They are the
+	// same observation; the duplication is for backward compat
+	// with the existing test surface and the agent tool list
+	// (which uses underscored names).
+	type alias struct{ from, to string }
+	aliases := []alias{
+		{tplinkwr841v8.OpWireless, "wireless_security"},
+		{tplinkwr841v8.OpWPS, "wps_state"},
+		{tplinkwr841v8.OpDMZ, "dmz_state"},
+		{tplinkwr841v8.OpUPnP, "upnp_state"},
+		{tplinkwr841v8.OpRemoteManagement, "remote_management"},
+		{tplinkwr841v8.OpForwarding, "forwarding_rules"},
+	}
+	for _, a := range aliases {
+		if v, ok := out[a.from]; ok {
+			out[a.to] = v
+		}
+	}
+	return out
+}
+
+func handleDevice(adapter domain.RouterAdapter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -273,7 +404,7 @@ func handleDevice(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
 	}
 }
 
-func handleStatus(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+func handleStatus(adapter domain.RouterAdapter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -294,7 +425,7 @@ func handleStatus(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
 	}
 }
 
-func handleClients(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+func handleClients(adapter domain.RouterAdapter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -326,7 +457,7 @@ func handleClients(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
 // in one capability does not poison another; the runtime is
 // authoritative on whether a capability is verified, absent,
 // unsupported_or_unverified, or unavailable.
-func securityHandler(adapter *tplinkwr841v8.Adapter, name string) http.HandlerFunc {
+func securityHandler(adapter domain.RouterAdapter, name string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -334,7 +465,12 @@ func securityHandler(adapter *tplinkwr841v8.Adapter, name string) http.HandlerFu
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
-		state, err := adapter.SecurityCapability(ctx, name)
+		sc, ok := adapter.(securityCapable)
+		if !ok {
+			writeUnsupported(w, name+" endpoint is not supported by this adapter")
+			return
+		}
+		state, err := sc.SecurityCapability(ctx, name)
 		if err != nil {
 			if errors.Is(err, domain.ErrUnverifiedEndpoint) {
 				writeUnsupported(w, name+" endpoint is unverified against captured traffic")
@@ -347,14 +483,18 @@ func securityHandler(adapter *tplinkwr841v8.Adapter, name string) http.HandlerFu
 			writeUnavailable(w, name+" failed: "+err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"state":  "verified",
-			"result": state,
-		})
+		if state.WPSEnabled == domain.True {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"state":  "verified",
+				"result": state,
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"state": "unverified"})
 	}
 }
 
-func handleSecurityWireless(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+func handleSecurityWireless(adapter domain.RouterAdapter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -362,7 +502,12 @@ func handleSecurityWireless(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
-		state, err := adapter.FetchWirelessSecurity(ctx)
+		sc, ok := adapter.(securityCapable)
+		if !ok {
+			writeUnsupported(w, "wireless endpoint is not supported by this adapter")
+			return
+		}
+		state, err := sc.SecurityCapability(ctx, tplinkwr841v8.OpWireless)
 		if err != nil {
 			if errors.Is(err, domain.ErrUnverifiedEndpoint) {
 				writeUnsupported(w, "wireless endpoint is unverified against captured traffic")
@@ -382,99 +527,22 @@ func handleSecurityWireless(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
 	}
 }
 
-func handleSecurityWPS(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+func handleSecurityWPS(adapter domain.RouterAdapter) http.HandlerFunc {
 	return securityHandler(adapter, tplinkwr841v8.OpWPS)
 }
 
-func handleSecurityDMZ(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+func handleSecurityDMZ(adapter domain.RouterAdapter) http.HandlerFunc {
 	return securityHandler(adapter, tplinkwr841v8.OpDMZ)
 }
 
-func handleSecurityUPnP(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+func handleSecurityUPnP(adapter domain.RouterAdapter) http.HandlerFunc {
 	return securityHandler(adapter, tplinkwr841v8.OpUPnP)
 }
 
-func handleSecurityRemoteManagement(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+func handleSecurityRemoteManagement(adapter domain.RouterAdapter) http.HandlerFunc {
 	return securityHandler(adapter, tplinkwr841v8.OpRemoteManagement)
 }
 
-func handleSecurityForwarding(adapter *tplinkwr841v8.Adapter) http.HandlerFunc {
+func handleSecurityForwarding(adapter domain.RouterAdapter) http.HandlerFunc {
 	return securityHandler(adapter, tplinkwr841v8.OpForwarding)
-}
-
-func withLocalCORS(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-		if origin != "" {
-			if !isLocalOrigin(origin) {
-				writeJSON(w, http.StatusForbidden, capabilityError{State: "unavailable", Reason: "origin not allowed"})
-				return
-			}
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-		}
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func isLocalOrigin(rawOrigin string) bool {
-	parsed, err := url.Parse(rawOrigin)
-	if err != nil {
-		return false
-	}
-	host := parsed.Hostname()
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
-
-func registerMockRoutes(mux *http.ServeMux, fixturesDir string) {
-	serveFileOrJSON := func(subpath string, defaultStatus int) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodGet {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-				return
-			}
-			path := filepath.Join(fixturesDir, subpath)
-			data, err := os.ReadFile(path)
-			if err != nil {
-				writeUnavailable(w, "mock fixture missing: "+subpath)
-				return
-			}
-			var parsed struct {
-				State string `json:"state"`
-			}
-			_ = json.Unmarshal(data, &parsed)
-			status := defaultStatus
-			switch parsed.State {
-			case "unavailable":
-				status = http.StatusServiceUnavailable
-			case "unsupported_or_unverified":
-				status = http.StatusNotFound
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(status)
-			_, _ = w.Write(data)
-		}
-	}
-
-	mux.HandleFunc("/healthz", serveFileOrJSON("healthz.json", http.StatusOK))
-	mux.HandleFunc("/v0/device", serveFileOrJSON("device.json", http.StatusOK))
-	mux.HandleFunc("/v0/status", serveFileOrJSON("status.json", http.StatusOK))
-	mux.HandleFunc("/v0/clients", serveFileOrJSON("clients.json", http.StatusOK))
-	mux.HandleFunc("/v0/capabilities", serveFileOrJSON("capabilities.json", http.StatusOK))
-	mux.HandleFunc("/v0/security/wireless", serveFileOrJSON("security/wireless.json", http.StatusServiceUnavailable))
-	mux.HandleFunc("/v0/security/wps", serveFileOrJSON("security/wps.json", http.StatusNotFound))
-	mux.HandleFunc("/v0/security/dmz", serveFileOrJSON("security/dmz.json", http.StatusOK))
-	mux.HandleFunc("/v0/security/upnp", serveFileOrJSON("security/upnp.json", http.StatusNotFound))
-	mux.HandleFunc("/v0/security/remote-management", serveFileOrJSON("security/remote-management.json", http.StatusNotFound))
-	mux.HandleFunc("/v0/security/forwarding", serveFileOrJSON("security/forwarding.json", http.StatusOK))
 }

@@ -70,13 +70,30 @@ runtime has them available:
 - **`tplink-adapter` / `wr841n-protocol`** — the vendor-
   specific recipes. There is no formal skill yet, but the
   ADRs in `docs/adr/` are the equivalent.
-- **`humanizer`** — bundled at
-  [`.claude/skills/humanizer/SKILL.md`](.claude/skills/humanizer/SKILL.md).
-  Run it on prose before committing documentation; it removes
-  AI writing patterns (35 of them, from Wikipedia's "Signs of
-  AI writing") without changing the facts. Same skill is also
-  available as a Claude plugin or a user-level install via
-  `cp -r .claude/skills/humanizer ~/.claude/skills/`.
+- **`humanizer`** — Wikipedia "Signs of AI writing" (35 patterns).
+  This is a personal-tooling skill, not project tooling. Install
+  it at the user level with
+  `cp -r <repo>/.claude/skills/humanizer ~/.claude/skills/` and run
+  it on prose before committing documentation. Not in the repo
+  by design.
+
+## Branching
+
+`main` is the default branch and the only long-lived branch.
+The latest release (or, during the MiniMax-Week window, the
+current alpha tip) lives there. All work happens on short-lived
+branches off `main`. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for
+the full branch-naming convention and PR rules. The summary:
+
+- `feat/<short-name>` — new capability.
+- `fix/<short-name>` — bug fix.
+- `test/<short-name>` — test-only change.
+- `docs/<short-name>` — documentation only.
+- `refactor/<short-name>` — no behavior change.
+- `chore/<short-name>` — build, CI, or repo hygiene.
+
+Keep branches focused: one concern per branch, rebase onto
+`main` before opening the PR.
 
 ## Branching
 
@@ -118,7 +135,7 @@ Keep branches focused: one concern per branch, rebase onto
 ```
 .
 ├── README.md           # user-facing
-├── HACKATHON_FAQ.md    # MiniMax-Week judging context
+├── docs/hackathon/minimax-week-2026.md    # MiniMax-Week judging context
 ├── AGENTS.md           # this file
 ├── CODE_OF_CONDUCT.md
 ├── CONTRIBUTING.md     # contribution workflow
