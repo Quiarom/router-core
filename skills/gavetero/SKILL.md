@@ -1,6 +1,12 @@
 ---
 name: gavetero
-description: Use gavetero to investigate home network state. Trigger when the user asks about network exposure, slow Internet, router configuration, connected devices, or any other home-network diagnostic question. Do not hardcode a command sequence: choose the smallest useful observation, then update your hypothesis and choose the next.
+description: "Use gavetero to investigate home network state. Trigger when the user asks about network exposure, slow Internet, router configuration, connected devices, or any other home-network diagnostic question. Do not hardcode a command sequence: choose the smallest useful observation, then update your hypothesis and choose the next."
+disable-model-invocation: false
+user-invocable: true
+license: MIT
+metadata:
+  author: Quiarom
+  version: "0.1.0"
 ---
 
 # Gavetero
