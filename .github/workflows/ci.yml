@@ -2,9 +2,17 @@ name: CI
 
 on:
   push:
-    branches: [main, integration/gavetero]
+    branches:
+      - main
+      - develop
+      - integration/gavetero
+      - feat/**
   pull_request:
-    branches: [main, integration/gavetero]
+    branches:
+      - main
+      - develop
+      - integration/gavetero
+      - feat/**
 
 # Cancel in-progress runs for the same branch when a new commit
 # lands. Saves CI minutes during rapid iteration.
@@ -78,14 +86,14 @@ jobs:
   # can install Gavetero from a fresh shell and use it without
   # knowing the repo architecture. This is the DoD test.
   #
-  # Runs only on push to integration/gavetero and main. Does not
-  # run on PRs from forks (avoids exposing secrets to forks).
+  # Runs only on push (not on PRs from forks, to avoid leaking
+  # any potential secrets through fork builds).
   # ---------------------------------------------------------------------------
   user-journey:
     name: User journey (gvt version, inspect, doctor, ask --dry-run)
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/integration/gavetero')
+    if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -115,9 +123,6 @@ jobs:
         run: /tmp/gvt-test/bin/gvt ask 'smoke test question' --dry-run --output json
       - name: verify no secret in any process
         run: |
-          # Walk /proc and look for the GMI key. There is none
-          # because --dry-run does not invoke GMI, but the test
-          # also confirms no password is on any argv.
           ! grep -rE 'psk=|wpaPassphrase=|adminPassword=' /proc/*/cmdline 2>/dev/null || true
           ! grep -rE 'sk-[a-zA-Z0-9]' /proc/*/environ 2>/dev/null || true
           echo "no secrets on argv or environ"
