@@ -59,6 +59,10 @@ jobs:
   # ---------------------------------------------------------------------------
   # Job 2: Frontend tests. Runs on every push. Independent of Go
   # so a Go flake does not block frontend work.
+  #
+  # Note: uses Node 22 because Node 20 deprecation cleanup hangs
+  # for several minutes on GitHub Actions runners. Node 22 is the
+  # current LTS and is fully supported by Vite 8.
   # ---------------------------------------------------------------------------
   frontend-test:
     name: Frontend (lint, test, build)
@@ -68,7 +72,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: npm ci
