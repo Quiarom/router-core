@@ -351,7 +351,7 @@ async fn connect_router(
     };
     if let Some(key) = request.ai_api_key.as_mut() {
         if !key.trim().is_empty() {
-            agent_command = agent_command.env("OPENROUTER_API_KEY", key.trim());
+            agent_command = agent_command.env("GMI_SERVING_API_KEY", key.trim());
         }
         key.zeroize();
     }
